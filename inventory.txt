@@ -1,0 +1,50 @@
+Messtechnik - Laser - Stative
+Item / Mat. 20x20 / 40x20 / Verbinder 5 / Mat. 80x80 Überschuss / Abdeckung nuten 
+Item / Verbinder 8
+Hebezeuge - Betonanker - Lastanschlagmittel
+Vakuum / Pumpstand / Turbos
+Vakuum / CF System
+Vakuum / KF System
+Vakuum / Iso-K, Rest
+Vakuum / Messtechnik - Vakuum/ Lecksucher
+Schrauben - Passstifte - Seegerringe - Stehbolzen
+Kabelbruecken, HRU Pumpen etc.
+Raeder - Woodplates
+Stromversorgung, LAN
+Alufolie - Arbeitssicherheit - Batterien - Klebeband - LED Beleuchtung - Muellsaecke
+Komponenten Antriebe - Medienplatten
+Item / Mat. 40x80
+Festo Schlaeuche
+Atomic Collision Eq.
+C. Scheidenberger - FRS Archiv C.S. - S2 Electronics
+Drive parts - Multi/TPC Antriebe - Vakuum / Antriebe
+1.4429 ESU - Barb
+Detektoren 1 - MUSICS - TA Detektoren - TPC equipments
+Zarges Boxen
+Halbzeug Metall
+Elektronik 
+HiTrap
+Experimente 20-22 - Vakuum / Rest
+Cherenkov DAQ - DAQ Electronics - fission implanter - Szintilatoren - TOF
+WASA/FRS
+Kabel 
+Anbauteile S2 Kammer - Music -  Travelling MUSIC
+Al-foil, gloves - feedthrough - MCP box - S4/Ion Catcher
+copper seal DN450 - S4/Ion Catcher
+caen logic unit - dc dage supports - S4/Ion Catcher - silberleitlack - silver conduct paint
+Igus Linearachsen und Steuerungen
+Camera radiationhard - Electronic modules 2
+Item / Mat. 80x80 / Rackschiene
+Halbzeug Kunststoffe
+S4 crane - Vakuum / Kammern / Klemmklotz S4 User Table
+Schrittmotor 5 Phas; Cosylab; Newport Steurung+Kabel
+Electronic modules
+Vakuum / Vorpumpen
+Vakuum / Flansche
+Vakuum / Flansche 2
+Item / 40 x 40
+FRS DAQ (Ion Catcher) FRS-IC
+Power tools - Tools in a box
+S1 Tasche - tube, MEWASA Ersatzbalg
+Rittal/Bolab/Verdrahtungskanal
+WASA 2 / ASUCA

@@ -6,11 +6,19 @@ import logging
 
 
 
+import sys
+
 import config
-import hall_sensor
-import qr_code_scanner
-import camera_stitching
 import gui
+
+if sys.platform.startswith("win32"):
+    import hall_sensor_mock as hall_sensor
+    import qr_code_scanner_mock as qr_code_scanner
+    import camera_stitching_mock as camera_stitching
+else:
+    import hall_sensor
+    import qr_code_scanner
+    import camera_stitching
 
 logging.basicConfig(
     level=logging.INFO,

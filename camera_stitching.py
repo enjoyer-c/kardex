@@ -13,7 +13,7 @@ class StitchResult:
     error_message: str | None = None
 
 def create_shelf_folders() -> None:
-    """Creates one output folder per shelf number, if it doesn't exist yet.
+    """Creates one output folder per tray number, if it doesn't exist yet.
     Meant to be called once at program startup."""
     for shelf_number in range(config.SHELF_LOWER_LIMIT, config.SHELF_UPPER_LIMIT + 1):
         folder = config.OUTPUT_DIR / str(shelf_number)

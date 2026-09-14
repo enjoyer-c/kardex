@@ -2,14 +2,12 @@ from __future__ import annotations
 import tkinter as tk
 from enum import Enum, auto
 import logging
-
-
-
-
 import sys
+
 
 import config
 import gui
+
 
 if sys.platform.startswith("win32"):
     import hall_sensor_mock as hall_sensor
@@ -19,6 +17,7 @@ else:
     import hall_sensor
     import qr_code_scanner
     import camera_stitching
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -48,10 +47,14 @@ class flow_controll:
             State.OUTBOUND: "tray is moving to final position",
             State.AT_DELIVERY_POSITION: f"tray is on final position - tray # {self.current_tablar_number}",
             State.CAPTURING_AND_STITCHING: "capature tray content",
-            State.RETURNING: "tray is moving back in warehouse",
+            State.RETURNING: "tray is moving back",
         }
         
         logging.info(f"Condition: {self.state.name}")
+
+        self.app.set_status(texts[self.state])
+        self.app.refresh()
+
 
     def _handle_outbound_start(self) -> None:
         """IDLE -> OUTBOUND. First door open."""

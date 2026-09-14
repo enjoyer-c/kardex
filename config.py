@@ -1,7 +1,14 @@
+"""
+Central configuration for the Kardex project.
+
+Platform-aware (Windows dev machine vs. Raspberry Pi), so the same
+file works unchanged on both without manual edits.
+"""
+
+
 from pathlib import Path
 import cv2
 import sys
-
 
 
 
@@ -21,8 +28,6 @@ elif sys.platform.startswith("win32"):
 else:
     CAP_BACKEND = cv2.CAP_ANY
 
-
-
 # --- USB-Cams ---------------------------------------------------------------
 USB_CAMERA_DEVICES = [
     "/dev/v4l/by-path/platform-3f980000.usb-usb-0:1.1.2.1:1.0-video-index0",
@@ -32,16 +37,13 @@ USB_CAMERA_FOURCC = "MJPG"
 USB_CAMERA_RESOLUTION = (1280, 720)     # (width, height)
 USB_CAMERA_WARMUP_FRAMES = 15           # “Disposable frames” for exposure/focus
 
-
 # --- Stitching -------------------------------------------------------------
 STITCHER_MODE = cv2.Stitcher_SCANS      #vaible modes: SCANS or PANORAMA
 STICHER_CONFIDENCE_THRESHOLD = 0.5      #Default = 1.0
 
 MAX_IMAGES_PER_TABLAR = 3
 
-
 # --- QR-Code-Cam -----------------------------------------------------------
-#QR_CAMERA_INDEX = 0
 QR_CAPTURE_SIZE = (1332, 990)   
 QR_SCAN_TIMEOUT_S = 10.0                # max waiting time for QR-Code [s]
 

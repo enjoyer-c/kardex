@@ -1,7 +1,8 @@
+from __future__ import annotations
 import tkinter as tk
 from enum import Enum, auto
 import logging
-from __future__ import annotations
+
 
 
 
@@ -70,7 +71,7 @@ class flow_controll:
             self.app.log_event("Capture skipped (no tray-nummer)")
         else:
             result = camera_stitching.capture_and_stitch(
-                config.USB_CAMERA_INDICES, tablar_number=self.current_tablar_number
+                config.USB_CAMERA_DEVICES, tablar_number=self.current_tablar_number
             )
             if result.success:
                 logging.info(f"Capture saved: {result.panorama_path}")

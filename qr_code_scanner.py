@@ -67,3 +67,4 @@ def wait_for_qr(timeout_s: float = config.QR_SCAN_TIMEOUT_S) -> Optional[QRResul
         return None
     finally:
         picam.stop()
+        picam.close()

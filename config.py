@@ -7,12 +7,11 @@ import sys
 
 # --- System -------------------------------------------------------
 if sys.platform.startswith("linux"):
-    BASE_DIR = Path("/home/pi/media")
+    BASE_DIR = Path("/home/pi/kardex/v0.2")
 elif sys.platform.startswith("win32"):
     BASE_DIR = Path(r"C:\Users\mjansson\Kardex\neuesKardexSystem\v0.2")
 else:
     BASE_DIR = Path.home() / "media"  
-
 
 
 if sys.platform.startswith("linux"):
@@ -24,10 +23,12 @@ else:
 
 
 
-
 # --- USB-Cams ---------------------------------------------------------------
-USB_CAMERA_INDICES = [0, 1,]            #test with 2 cams later [0, 1, 2, 3]
-
+USB_CAMERA_DEVICES = [
+    "/dev/v4l/by-path/platform-3f980000.usb-usb-0:1.1.2.1:1.0-video-index0",
+    "/dev/v4l/by-path/platform-3f980000.usb-usb-0:1.1.2.2:1.0-video-index0",
+]
+USB_CAMERA_FOURCC = "MJPG"              
 USB_CAMERA_RESOLUTION = (1280, 720)     # (width, height)
 USB_CAMERA_WARMUP_FRAMES = 15           # “Disposable frames” for exposure/focus
 

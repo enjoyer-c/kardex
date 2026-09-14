@@ -46,12 +46,12 @@ class flow_controll:
         texts = {
             State.IDLE: "IDLE - waiting for Door to open",
             State.OUTBOUND: "tray is moving to final position",
-            State.AT_DELIVERY_POSITION: f"try is on final position - tray# {self.current_tablar_number}",
+            State.AT_DELIVERY_POSITION: f"tray is on final position - tray # {self.current_tablar_number}",
             State.CAPTURING_AND_STITCHING: "capature tray content",
             State.RETURNING: "tray is moving back in warehouse",
         }
-        self.app.set_status(texts[self.state])
-        logging.info(f"Zustand: {self.state.name}")
+        
+        logging.info(f"Condition: {self.state.name}")
 
     def _handle_outbound_start(self) -> None:
         """IDLE -> OUTBOUND. First door open."""

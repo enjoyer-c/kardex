@@ -56,5 +56,17 @@ def write_all(lines: list[str]) -> None:
         for line in lines:
             f.write(line + "\n")
  
- 
 
+
+def update_description(shelf_number: int, new_description: str) -> None:
+    """Updates a single shelf's description and writes the whole file
+    back.
+    """
+    lines = read_all()
+    index = shelf_number - config.SHELF_LOWER_LIMIT
+ 
+    if not (0 <= index < len(lines)):
+        raise ValueError(f"Shelf number {shelf_number} is out of valid range.")
+ 
+    lines[index] = new_description
+    write_all(lines)

@@ -40,6 +40,14 @@ def create_shelf_folders() -> None:
         folder.mkdir(parents=True, exist_ok=True)
 
 
+def enforce_max_images(output_dir: Path, max_images: int) -> None:
+    """Deletes the oldest panorama images if more than max_images are stored."""
+    images = sorted(output_dir.glob("finalFrame_*.jpg"))
+    while len(images) > max_images:
+        oldest = images.pop(0)
+        oldest.unlink()
+
+
 def _capture_real(index: int):
     """Tries to grab one frame from a real webcam. Returns None if the
     camera isn't available or doesn't deliver a frame."""
@@ -96,6 +104,8 @@ def capture_and_stitch(camera_devices, tablar_number: str) -> StitchResult:
 
     pano_path = output_dir / f"finalFrame_{timestamp}.jpg"
     cv2.imwrite(str(pano_path), panorama)
+
+    enforce_max_images(output_dir, config.MAX_IMAGES_PER_TABLAR)
 
     return StitchResult(success=True, panorama_path=pano_path)
 

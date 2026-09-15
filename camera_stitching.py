@@ -77,7 +77,6 @@ def capture_and_stitch(camera_devices: list[str], tablar_number: str) -> StitchR
     output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime(config.TIMESTAMP_FORMAT)
 
-    # Stitching SCANS mode assumes cameras are facing the same flat surface
     stitcher = cv2.Stitcher_create(config.STITCHER_MODE)
     stitcher.setPanoConfidenceThresh(config.STICHER_CONFIDENCE_THRESHOLD)
     status, panorama = stitcher.stitch(frames)

@@ -1,5 +1,9 @@
 """
+Hall sensor module for detecting whether the door
+of the kardex shuttle is open or closed.
 
+Calls the optional on_change callback with a bool (True = open) on every
+state change.
 """
 
 
@@ -16,11 +20,6 @@ except (ImportError, ModuleNotFoundError):
 
 
 class HallSensor:
-    """
-    on_change is called with a bool (True = door open) every time the
-    sensor state changes.
-    """
-
     def __init__(self, on_change: Optional[Callable[[bool], None]] = None):
         self._on_change = on_change
         self._is_open = False

@@ -1,7 +1,5 @@
 """
 Mock QR scanner for Windows testing - always returns tray number "1",
-regardless of timeout_s (kept as a parameter only for interface
-compatibility with the real qr_code_scanner.wait_for_qr).
 """
 
 from dataclasses import dataclass

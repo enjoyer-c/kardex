@@ -1,6 +1,6 @@
 """
 Wraps the ribbon camera (Raspberry Pi HQ Camera) for QR code scanning.
-Captures still images via picamera2 and decodes QR codes with pyzbar.
+Captures images via picamera2 and decodes QR codes with pyzbar.
 """
 
 from dataclasses import dataclass
@@ -50,7 +50,7 @@ def scan_frame(frame) -> Optional[QRResult]:
  
 def wait_for_qr(timeout_s: float = config.QR_SCAN_TIMEOUT_S) -> Optional[QRResult]:
     """Repeatedly captures frames and tries to decode a QR code, until
-    either one is found or the timeout is reached.
+    either one is found or the timeout is reached (QR_SCAN_TIMEOUT_S).
     """
     if not HAS_PICAMERA:
         print("[qr_code_scanner] picamera2 not available - cannot scan.")

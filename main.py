@@ -38,6 +38,7 @@ class flow_controll:
         self.current_tablar_number: str | None = None
 
         self.sensor = hall_sensor.HallSensor(on_change=self._on_door_change)
+        self.app.on_manual_capture = self._handle_manual_capture_request
 
         self._update_status()
 
@@ -52,7 +53,7 @@ class flow_controll:
         
         logging.info(f"Condition: {self.state.name}")
 
-        self.app.set_status(texts[self.state])
+        self.app.set_status(texts[self.state], self.state.name)
         self.app.refresh()
 
 
@@ -100,6 +101,33 @@ class flow_controll:
         self.current_tablar_number = None
         self.state = State.IDLE
         self._update_status()
+
+
+    def _handle_manual_capture_request(self, tray_number: str) -> None:
+        """Triggered from the GUI's manual-capture button. Only allowed
+        while IDLE, so it can't collide with the automatic door-sensor
+        flow (which also drives the cameras)."""
+
+        if self.state != State.IDLE:
+            logging.warning(f"Manual capture rejected - system is in state {self.state.name}, not IDLE.")
+            self.app.log_event("Manual capture rejected - system is busy")
+            return
+
+        logging.info(f"Manual capture requested for tray {tray_number}")
+        self.app.log_event(f"Manual capture started for tray {tray_number}")
+
+        result = camera_stitching.capture_and_stitch(
+            config.USB_CAMERA_DEVICES, tablar_number=tray_number
+        )
+        if result.success:
+            logging.info(f"Manual capture saved: {result.panorama_path}")
+            self.app.log_event(f"Manual capture saved: {result.panorama_path.name}")
+        else:
+            logging.error(f"Manual capture failed: {result.error_message}")
+            self.app.log_event(f"Error: {result.error_message}")
+
+        # Table's "last opened" column should reflect the new capture
+        self.app._populate_tray_table(self.app.search_var.get())
 
 
     def _on_door_change(self, is_open: bool) -> None:

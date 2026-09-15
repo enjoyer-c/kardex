@@ -52,7 +52,12 @@ HALL_SENSOR_GPIO = 17 #Pin11
 HALL_SENSOR_BOUNCE_TIME_MS = 50
 
 # --- Data -----------------------------------------------------------------
-OUTPUT_DIR = BASE_DIR / "captures"
+if sys.platform.startswith("linux"):
+    SSD_DIR = Path("/mnt/kardex_ssd")
+    OUTPUT_DIR = SSD_DIR / "captures"
+else:
+    OUTPUT_DIR = BASE_DIR / "captures"
+
 TIMESTAMP_FORMAT = "%Y%m%d_%H%M%S"
 
 SHELF_LOWER_LIMIT = 1

@@ -27,6 +27,7 @@ from PIL import Image, ImageTk
 
 import config
 import inventory
+import logging
 
 
 STATUS_COLORS = {
@@ -53,7 +54,7 @@ class App:
         self._image_info_var: Optional[tk.StringVar] = None
         self._manual_capture_window: Optional[tk.Toplevel] = None
         self._manual_tray_var: Optional[tk.StringVar] = None
-
+        self._search_after_id: Optional[str] = None
         # set from main.py - called when the user triggers a manual capture
         self.on_manual_capture: Optional[Callable[[str], None]] = None
 
@@ -73,6 +74,16 @@ class App:
         top_frame.grid_columnconfigure(3, weight=0)  # manual capture button
         top_frame.grid_columnconfigure(4, weight=0)  # history button
 
+        hint_frame = tk.Frame(top_frame, bg="white", padx=10, pady=6)
+        hint_frame.grid(row=0, column=0, rowspan=2, sticky="w")
+
+        tk.Label(
+            hint_frame, text="Double-click: show tray content", font=("Arial", 10), fg="black", bg="white"
+        ).pack(anchor="w")
+        tk.Label(
+            hint_frame, text="Right-click: rename description", font=("Arial", 10), fg="black", bg="white"
+        ).pack(anchor="w")
+
         self.status_text = tk.StringVar(value="IDLE - waiting for door to open")
         # tk.Label statt ttk.Label, weil ttk dynamische bg/fg-Farben nicht
         # sauber unterstuetzt (Styles waeren noetig)
@@ -87,10 +98,13 @@ class App:
         bg, fg = STATUS_COLORS["IDLE"]
         self.status_label.configure(bg=bg, fg=fg)
 
-        manual_button = ttk.Button(top_frame, text="Manual Capture", command=self._open_manual_capture_window)
+        style = ttk.Style()
+        style.configure("Big.TButton", font=("Arial", 13), padding=(12, 8))
+
+        manual_button = ttk.Button(top_frame, text="Manual Capture", command=self._open_manual_capture_window, style="Big.TButton")
         manual_button.grid(row=0, column=3, padx=(0, 10), sticky="e")
 
-        history_button = ttk.Button(top_frame, text="History", command=self._open_history_window)
+        history_button = ttk.Button(top_frame, text="History", command=self._open_history_window, style="Big.TButton")
         history_button.grid(row=0, column=4, sticky="e")
 
         # Search - placed in the same column (1) as the status label, so
@@ -128,6 +142,16 @@ class App:
         self.root.update_idletasks()
 
     def _handle_search_change(self, event=None) -> None:
+        # Debounce: Tabelle nicht bei jedem einzelnen Tastendruck neu
+        # aufbauen, sondern erst 250ms nachdem zuletzt getippt wurde -
+        # verhindert bis zu 50 Dateisystem-Zugriffe pro Tastenanschlag
+        if self._search_after_id is not None:
+            self.root.after_cancel(self._search_after_id)
+
+        self._search_after_id = self.root.after(300, self._apply_search)
+
+    def _apply_search(self) -> None:
+        self._search_after_id = None
         query = self.search_var.get()
         self._populate_tray_table(query)
 
@@ -185,13 +209,16 @@ class App:
             messagebox.showwarning("Input missing", "Please enter the tray number.", parent=self._manual_capture_window)
             return
 
-        if self.on_manual_capture:
-            self.on_manual_capture(tray_number)
-
-        if self._manual_capture_window is not None and self._manual_capture_window.winfo_exists():
-            self._manual_capture_window.destroy()
-            self._manual_capture_window = None
-            self._manual_tray_var = None
+        try:
+            if self.on_manual_capture:
+                self.on_manual_capture(tray_number)
+        except Exception as exc:
+            print(f"[gui] Manual capture failed with an unexpected error: {exc}")
+        finally:
+            if self._manual_capture_window is not None and self._manual_capture_window.winfo_exists():
+                self._manual_capture_window.destroy()
+                self._manual_capture_window = None
+                self._manual_tray_var = None
 
     # --- History (separate pop-up window) --------------------------------
 
@@ -203,7 +230,7 @@ class App:
 
         self._history_window = tk.Toplevel(self.root)
         self._history_window.title("History")
-        self._history_window.geometry("500x400")
+        self._history_window.geometry("700x300")
 
         self._history_listbox = tk.Listbox(self._history_window, font=("Consolas", 10))
         self._history_listbox.pack(padx=10, pady=10, fill="both", expand=True)
@@ -219,14 +246,35 @@ class App:
 
         self._history_window.protocol("WM_DELETE_WINDOW", _on_close)
 
-    def log_event(self, text: str) -> None:
+    def log_event(self, text: str, level: int = logging.INFO) -> None:
         timestamp = datetime.now().strftime("%H:%M:%S")
         entry = f"[{timestamp}] {text}"
         self._log_entries.append(entry)
 
+        logging.log(level, text)
+
         if self._history_listbox is not None and self._history_window is not None and self._history_window.winfo_exists():
             self._history_listbox.insert(tk.END, entry)
             self._history_listbox.see(tk.END)
+
+    def load_history_from_log_file(self, log_file: Path, max_lines: int = 100) -> None:
+        """Pre-loads the History list with the tail of the persisted log
+        file, so it isn't empty right after a restart (e.g. after a crash
+        or power loss)."""
+        if not log_file.exists():
+            return
+
+        try:
+            with open(log_file, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+        except OSError:
+            return
+
+        for line in lines[-max_lines:]:
+            line = line.rstrip("\n")
+            if line:
+                self._log_entries.append(line)
+
 
     # --- Section 2: Tray-table ----------------------------------------
 
@@ -238,14 +286,14 @@ class App:
         style.configure("Treeview", font=("Arial", 14), rowheight=32)
         style.configure("Treeview.Heading", font=("Arial", 14, "bold"))
 
-        columns = ("tray", "description", "last_opened")
+        columns = ("tray", "description", "last_capture")
         self.tray_table = ttk.Treeview(table_frame, columns=columns, show="headings")
         self.tray_table.heading("tray", text="Tray Nr.")
         self.tray_table.heading("description", text="Description")
-        self.tray_table.heading("last_opened", text="Last opened")
+        self.tray_table.heading("last_capture", text="Last Capture")
         self.tray_table.column("tray", width=100, stretch=False, anchor="center")
         self.tray_table.column("description", width=900, anchor="w")
-        self.tray_table.column("last_opened", width=140, stretch=False, anchor="center")
+        self.tray_table.column("last_capture", width=140, stretch=False, anchor="center")
 
         scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.tray_table.yview)
         self.tray_table.configure(yscrollcommand=scrollbar.set)
@@ -286,9 +334,10 @@ class App:
 
     # --- Rename with right mouse button ----------------------------------------
 
+        
     def _handle_right_click(self, event) -> None:
         """Shows a context menu with a Rename option for the row under
-        the cursor."""
+        the cursor. Closes automatically on any click outside the menu."""
 
         row_id = self.tray_table.identify_row(event.y)
         if not row_id:
@@ -298,7 +347,17 @@ class App:
 
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(label="Rename", command=lambda: self._rename_row(row_id))
-        menu.post(event.x_root, event.y_root)
+
+        def _close_menu(_event=None) -> None:
+            menu.unpost()
+
+        menu.bind("<FocusOut>", _close_menu)
+
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+            menu.focus_set()
+        finally:
+            menu.grab_release()
 
     def _rename_row(self, row_id: str) -> None:
         """Prompts for a new description, confirms with the user, then

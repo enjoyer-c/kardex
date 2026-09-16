@@ -3,11 +3,10 @@ import tkinter as tk
 from enum import Enum, auto
 import logging
 import sys
-
+import logging.handlers
 
 import config
 import gui
-
 
 if sys.platform.startswith("win32"):
     import hall_sensor_mock as hall_sensor
@@ -18,10 +17,17 @@ else:
     import qr_code_scanner
     import camera_stitching
 
+config.LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.handlers.RotatingFileHandler(
+            config.LOG_FILE, maxBytes=5_000_000, backupCount=3
+        ),
+        logging.StreamHandler(),  # weiterhin auch in der Konsole sichtbar
+    ],
 )
 
 class State(Enum):
@@ -50,8 +56,6 @@ class flow_controll:
             State.CAPTURING_AND_STITCHING: "capature tray content",
             State.RETURNING: "tray is moving back",
         }
-        
-        logging.info(f"Condition: {self.state.name}")
 
         self.app.set_status(texts[self.state], self.state.name)
         self.app.refresh()
@@ -65,8 +69,7 @@ class flow_controll:
     def _handle_delivery_arrival(self) -> None:
         qr_result = qr_code_scanner.wait_for_qr()
         if qr_result is None:
-            logging.error("No QR-Code found - Capture skipped.")
-            self.app.log_event("Error: No QR-Code found")
+            self.app.log_event("Error: No QR-Code found", level=logging.ERROR)
         else:
             self.current_tablar_number = qr_result.data
 
@@ -79,18 +82,15 @@ class flow_controll:
         self._update_status()
 
         if self.current_tablar_number is None:
-            logging.warning("No tray-number available (QR scan failed earlier) - skipping capture.")
-            self.app.log_event("Capture skipped (no tray-nummer)")
+            self.app.log_event("Capture skipped (no tray-nummer)", level=logging.WARNING)
         else:
             result = camera_stitching.capture_and_stitch(
                 config.USB_CAMERA_DEVICES, tablar_number=self.current_tablar_number
             )
             if result.success:
-                logging.info(f"Capture saved: {result.panorama_path}")
                 self.app.log_event(f"Capture saved: {result.panorama_path.name}")
             else:
-                logging.error(f"Capture failed: {result.error_message}")
-                self.app.log_event(f"Error: {result.error_message}")
+                self.app.log_event(f"Error: {result.error_message}", level=logging.ERROR)
 
         self.state = State.RETURNING
         self._update_status()
@@ -109,22 +109,18 @@ class flow_controll:
         flow (which also drives the cameras)."""
 
         if self.state != State.IDLE:
-            logging.warning(f"Manual capture rejected - system is in state {self.state.name}, not IDLE.")
-            self.app.log_event("Manual capture rejected - system is busy")
+            self.app.log_event("Manual capture rejected - system is busy", level=logging.WARNING)
             return
 
-        logging.info(f"Manual capture requested for tray {tray_number}")
         self.app.log_event(f"Manual capture started for tray {tray_number}")
 
         result = camera_stitching.capture_and_stitch(
             config.USB_CAMERA_DEVICES, tablar_number=tray_number
         )
         if result.success:
-            logging.info(f"Manual capture saved: {result.panorama_path}")
             self.app.log_event(f"Manual capture saved: {result.panorama_path.name}")
         else:
-            logging.error(f"Manual capture failed: {result.error_message}")
-            self.app.log_event(f"Error: {result.error_message}")
+            self.app.log_event(f"Error: {result.error_message}", level=logging.ERROR)
 
         # Table's "last opened" column should reflect the new capture
         self.app._populate_tray_table(self.app.search_var.get())
@@ -145,6 +141,7 @@ def main() -> None:
 
     root = tk.Tk()
     app = gui.App(root)
+    app.load_history_from_log_file(config.LOG_FILE)
     flow_controll(app)
     root.mainloop()
 

@@ -13,12 +13,10 @@ import sys
 
 
 # --- System -------------------------------------------------------
-if sys.platform.startswith("linux"):
-    BASE_DIR = Path("/home/pi/kardex/v0.2")
-elif sys.platform.startswith("win32"):
-    BASE_DIR = Path(r"C:\Users\mjansson\Kardex\neuesKardexSystem\v0.2")
+if sys.platform.startswith("win32"):
+    BASE_DIR = Path(r"C:\Users\mjansson\Kardex\neuesKardexSystem\dev")
 else:
-    BASE_DIR = Path.home() / "media"  
+    BASE_DIR = Path(__file__).resolve().parent  
 
 
 if sys.platform.startswith("linux"):
@@ -56,6 +54,7 @@ if sys.platform.startswith("linux"):
     SSD_DIR = Path("/mnt/kardex_ssd")
     OUTPUT_DIR = SSD_DIR / "captures"
 else:
+    SSD_DIR = BASE_DIR
     OUTPUT_DIR = BASE_DIR / "captures"
 
 TIMESTAMP_FORMAT = "%Y%m%d_%H%M%S"
@@ -65,3 +64,7 @@ SHELF_UPPER_LIMIT = 50
 
 # --- Inventory ------------------------------------------------------------
 INVENTORY_FILE = BASE_DIR / "inventory.txt"
+
+# --- Logging ----------------------------------------------------------
+LOG_DIR = SSD_DIR / "logs"
+LOG_FILE = LOG_DIR / "kardex.log"

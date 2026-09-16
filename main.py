@@ -8,6 +8,7 @@ import logging.handlers
 import config
 import gui
 
+
 if sys.platform.startswith("win32"):
     import hall_sensor_mock as hall_sensor
     import qr_code_scanner_mock as qr_code_scanner
@@ -16,6 +17,7 @@ else:
     import hall_sensor
     import qr_code_scanner
     import camera_stitching
+
 
 config.LOG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -26,7 +28,7 @@ logging.basicConfig(
         logging.handlers.RotatingFileHandler(
             config.LOG_FILE, maxBytes=5_000_000, backupCount=3
         ),
-        logging.StreamHandler(),  # weiterhin auch in der Konsole sichtbar
+        logging.StreamHandler(),  
     ],
 )
 
@@ -122,9 +124,7 @@ class flow_controll:
         else:
             self.app.log_event(f"Error: {result.error_message}", level=logging.ERROR)
 
-        # Table's "last opened" column should reflect the new capture
         self.app._populate_tray_table(self.app.search_var.get())
-
 
     def _on_door_change(self, is_open: bool) -> None:
         if is_open and self.state == State.IDLE:

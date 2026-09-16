@@ -1,5 +1,25 @@
+"""
+Handles the USB cameras and panorama stitching.
+
+Cameras are opened, warmed up, read, and released on every single
+capture (same as before) - NOT kept open persistently. What's new
+compared to the original version:
+
+  - Cameras are read in PARALLEL (one thread per camera) instead of
+    strictly one after another. NOTE: the original serial approach
+    was a deliberate choice to avoid overwhelming USB bandwidth when
+    two cameras stream at once (see the original capture_one
+    docstring/comment). Reading warmup frames from both cameras at
+    the same time could reintroduce that same bandwidth problem -
+    this needs to be verified on the actual Pi hardware. If capture
+    becomes unreliable (cameras failing to open, dropped/garbled
+    frames, timeouts), fall back to sequential reads but keep the
+    lock below.
+"""
+
 from dataclasses import dataclass
 from pathlib import Path
+import threading
 import cv2
 from datetime import datetime
 
@@ -12,12 +32,20 @@ class StitchResult:
     panorama_path: Path | None = None
     error_message: str | None = None
 
+
+# acquire(blocking=False) in capture_and_stitch - a second capture
+# attempt while one is already running is rejected instead of queued
+# or silently colliding with the first one.
+_capture_lock = threading.Lock()
+
+
 def create_shelf_folders() -> None:
     """Creates one output folder per tray number, if it doesn't exist yet.
     Meant to be called once at program startup."""
     for shelf_number in range(config.SHELF_LOWER_LIMIT, config.SHELF_UPPER_LIMIT + 1):
         folder = config.OUTPUT_DIR / str(shelf_number)
         folder.mkdir(parents=True, exist_ok=True)
+
 
 def open_camera(device: str) -> cv2.VideoCapture:
     cam = cv2.VideoCapture(device, config.CAP_BACKEND)
@@ -26,10 +54,12 @@ def open_camera(device: str) -> cv2.VideoCapture:
     cam.set(cv2.CAP_PROP_FRAME_HEIGHT, config.USB_CAMERA_RESOLUTION[1])
     return cam
 
+
 def warmup(cam: cv2.VideoCapture, frames: int = config.USB_CAMERA_WARMUP_FRAMES) -> None:
     """Reads and discards a number of frames to let exposure/focus settle."""
     for _ in range(frames):
         cam.read()
+
 
 def enforce_max_images(output_dir: Path, max_images: int) -> None:
     """Deletes the oldest panorama images if more than max_images are stored."""
@@ -38,12 +68,10 @@ def enforce_max_images(output_dir: Path, max_images: int) -> None:
         oldest = images.pop(0)
         oldest.unlink()
 
+
 def capture_one(device: str) -> tuple[bool, "cv2.typing.MatLike | None", str | None]:
     """Opens a single camera, captures one frame, and releases it again
-    before returning. Cameras are handled strictly one at a time (open
-    -> warmup -> read -> release) rather than all at once, since two
-    C920s streaming simultaneously overwhelm the USB bandwidth even
-    with MJPEG + a powered hub.
+    before returning (open -> warmup -> read -> release).
 
     Returns (success, frame, error_message).
     """
@@ -62,34 +90,57 @@ def capture_one(device: str) -> tuple[bool, "cv2.typing.MatLike | None", str | N
     finally:
         cam.release()
 
+
 def capture_and_stitch(camera_devices: list[str], tablar_number: str) -> StitchResult:
-    """Captures one frame from each camera (one at a time, not
-    simultaneously - see capture_one), stitches them, and saves the
-    result."""
-    frames = []
-    for device in camera_devices:
-        success, frame, error_message = capture_one(device)
-        if not success:
-            return StitchResult(success=False, error_message=error_message)
-        frames.append(frame)
+    """Captures one frame from each camera IN PARALLEL (each camera is
+    still individually opened, warmed up, read and released - see
+    capture_one), stitches them, and saves the result. Refuses to run
+    (instead of blocking or colliding) if a capture is already in
+    progress."""
 
-    output_dir = config.OUTPUT_DIR / tablar_number
-    output_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime(config.TIMESTAMP_FORMAT)
+    if not _capture_lock.acquire(blocking=False):
+        return StitchResult(success=False, error_message="Capture already in progress - request ignored")
 
-    stitcher = cv2.Stitcher_create(config.STITCHER_MODE)
-    stitcher.setPanoConfidenceThresh(config.STICHER_CONFIDENCE_THRESHOLD)
-    status, panorama = stitcher.stitch(frames)
+    try:
+        results: list[tuple[bool, "cv2.typing.MatLike | None", str | None] | None] = [None] * len(camera_devices)
 
-    if status != cv2.Stitcher_OK:
-        return StitchResult(success=False, error_message=f"Stitching failed, status code: {status}")
+        def _worker(index: int, device: str) -> None:
+            try:
+                results[index] = capture_one(device)
+            except Exception as exc:
+                results[index] = (False, None, f"Unexpected error on {device}: {exc}")
 
-    pano_path = output_dir / f"finalFrame_{timestamp}.jpg"
-    cv2.imwrite(str(pano_path), panorama)
+        threads = [
+            threading.Thread(target=_worker, args=(i, device))
+            for i, device in enumerate(camera_devices)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
 
-    enforce_max_images(output_dir, config.MAX_IMAGES_PER_TABLAR)
+        frames = []
+        for success, frame, error_message in results:
+            if not success:
+                return StitchResult(success=False, error_message=error_message)
+            frames.append(frame)
 
-    return StitchResult(success=True, panorama_path=pano_path)
+        output_dir = config.OUTPUT_DIR / tablar_number
+        output_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime(config.TIMESTAMP_FORMAT)
 
+        stitcher = cv2.Stitcher_create(config.STITCHER_MODE)
+        stitcher.setPanoConfidenceThresh(config.STICHER_CONFIDENCE_THRESHOLD)
+        status, panorama = stitcher.stitch(frames)
 
+        if status != cv2.Stitcher_OK:
+            return StitchResult(success=False, error_message=f"Stitching failed, status code: {status}")
 
+        pano_path = output_dir / f"finalFrame_{timestamp}.jpg"
+        cv2.imwrite(str(pano_path), panorama)
+
+        enforce_max_images(output_dir, config.MAX_IMAGES_PER_TABLAR)
+
+        return StitchResult(success=True, panorama_path=pano_path)
+    finally:
+        _capture_lock.release()

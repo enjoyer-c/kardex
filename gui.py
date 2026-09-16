@@ -123,7 +123,6 @@ class App:
         # this, the entry box visually drifts right (the label only adds
         # width on the left), so it looks off-center under the status
         # box even though this whole frame is centered in the grid cell
-        style = ttk.Style()
         bg_color = style.lookup("TFrame", "background") or self.root.cget("bg")
         tk.Label(
             search_frame, text="search:", font=("Arial", 13), fg=bg_color, bg=bg_color
@@ -213,7 +212,7 @@ class App:
             if self.on_manual_capture:
                 self.on_manual_capture(tray_number)
         except Exception as exc:
-            print(f"[gui] Manual capture failed with an unexpected error: {exc}")
+            self.log_event(f"Manual capture failed unexpectedly: {exc}", level=logging.ERROR)
         finally:
             if self._manual_capture_window is not None and self._manual_capture_window.winfo_exists():
                 self._manual_capture_window.destroy()
@@ -253,7 +252,8 @@ class App:
         timestamp = datetime.now().strftime("%H:%M:%S")
         entry = f"[{timestamp}] {text}"
         self._log_entries.append(entry)
-        self._log_entries = self._log_entries[-500:]
+        if len(self._log_entries) > 500:
+            del self._log_entries[:-500]
 
         logging.log(level, text)
 

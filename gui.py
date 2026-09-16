@@ -227,10 +227,13 @@ class App:
             self._history_window.lift()
             self._history_window.focus_force()
             return
-
+        
         self._history_window = tk.Toplevel(self.root)
         self._history_window.title("History")
-        self._history_window.geometry("700x300")
+        self._history_window.geometry("500x400")
+        self._history_window.lift()
+        self._history_window.attributes("-topmost", True)
+        self._history_window.after(200, lambda: self._history_window.attributes("-topmost", False))
 
         self._history_listbox = tk.Listbox(self._history_window, font=("Consolas", 10))
         self._history_listbox.pack(padx=10, pady=10, fill="both", expand=True)
@@ -250,6 +253,7 @@ class App:
         timestamp = datetime.now().strftime("%H:%M:%S")
         entry = f"[{timestamp}] {text}"
         self._log_entries.append(entry)
+        self._log_entries = self._log_entries[-500:]
 
         logging.log(level, text)
 

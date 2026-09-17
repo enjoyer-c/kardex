@@ -4,10 +4,10 @@ from enum import Enum, auto
 import logging
 import sys
 import logging.handlers
+import traceback
 
 import config
 import gui
-
 
 if sys.platform.startswith("win32"):
     import hall_sensor_mock as hall_sensor
@@ -18,7 +18,6 @@ else:
     import qr_code_scanner
     import camera_stitching
 
-
 config.LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
@@ -28,7 +27,7 @@ logging.basicConfig(
         logging.handlers.RotatingFileHandler(
             config.LOG_FILE, maxBytes=5_000_000, backupCount=3
         ),
-        logging.StreamHandler(),  
+        logging.StreamHandler(),  # weiterhin auch in der Konsole sichtbar
     ],
 )
 
@@ -124,7 +123,9 @@ class flow_controll:
         else:
             self.app.log_event(f"Error: {result.error_message}", level=logging.ERROR)
 
+        # Table's "last opened" column should reflect the new capture
         self.app._populate_tray_table(self.app.search_var.get())
+
 
     def _on_door_change(self, is_open: bool) -> None:
         if is_open and self.state == State.IDLE:
@@ -136,14 +137,27 @@ class flow_controll:
         elif not is_open and self.state == State.RETURNING:
             self._handle_returned()
 
+
+def _handle_callback_exception(exc, val, tb) -> None:
+    """Overrides Tkinter's default GUI-callback exception handler.
+    Normally, an exception raised inside a button click / event
+    binding is only printed to stderr and easily lost (especially
+    over VNC, or if nobody's watching the terminal) - this makes sure
+    it always ends up in the persistent log file too."""
+    logging.error("Unhandled GUI exception:\n%s", "".join(traceback.format_exception(exc, val, tb)))
+
+
 def main() -> None:
     camera_stitching.create_shelf_folders()
 
     root = tk.Tk()
+    root.report_callback_exception = _handle_callback_exception
+
     app = gui.App(root)
     app.load_history_from_log_file(config.LOG_FILE)
     flow_controll(app)
     root.mainloop()
+
 
 if __name__ == "__main__":
     main()

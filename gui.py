@@ -4,13 +4,18 @@ GUI Layout:
 Section 1 - Row 1: (spacer) - Status (center) - (spacer) - Manual Capture button - History button
 Section 1 - Row 2: Search bar, wider, centered
 
-Section 2: Table listing all tray's (1-50), scrollable
+Section 2: Resizable split (ttk.Panedwindow, vertical) between:
+    - Top pane: Table listing all tray's (1-50), scrollable
+    - Bottom pane: Live image preview of the selected tray's last
+      capture - updates automatically on click OR arrow-key
+      navigation (Treeview's <<TreeviewSelect>> event covers both)
 
 *functions:
     - History open seperate popup-Window
     - Right-clicking on a row allows to rename descriptions
     - search inventory
-    - double click on a row opens the latest captured image for that tray
+    - selecting a row (click or arrow keys) live-loads its last
+      captured image in the preview pane below the table
     - manual capture: opens a small popup to enter a tray number and
       trigger a capture without waiting for the automatic door-sensor
       flow (meant as a fallback, e.g. if the door magnet/sensor fails)
@@ -38,6 +43,12 @@ STATUS_COLORS = {
     "RETURNING": ("#fff3e0", "#e65100"),
 }
 
+# How long to wait after the selection last changed before actually
+# loading the image - avoids loading/decoding a JPEG on every single
+# intermediate row while scrolling quickly through the table with the
+# arrow keys held down.
+PREVIEW_DEBOUNCE_MS = 150
+
 
 class App:
     def __init__(self, root: tk.Tk):
@@ -48,18 +59,17 @@ class App:
         self._log_entries: list[str] = []
         self._history_window: Optional[tk.Toplevel] = None
         self._history_listbox: Optional[tk.Listbox] = None
-        self._image_window: Optional[tk.Toplevel] = None
-        self._image_label: Optional[ttk.Label] = None
-        self._image_photo = None
-        self._image_info_var: Optional[tk.StringVar] = None
         self._manual_capture_window: Optional[tk.Toplevel] = None
         self._manual_tray_var: Optional[tk.StringVar] = None
         self._search_after_id: Optional[str] = None
+        self._preview_after_id: Optional[str] = None
+        self._preview_photo = None  # keep a reference, or Tk garbage-collects it
+
         # set from main.py - called when the user triggers a manual capture
         self.on_manual_capture: Optional[Callable[[str], None]] = None
 
         self._build_top_section()
-        self._build_tray_table()
+        self._build_main_section()
 
     # --- Section 1: Status / Manual Capture / History (row 0),
     #     Search (row 1) - shared grid so both rows center on the same
@@ -78,10 +88,12 @@ class App:
         hint_frame.grid(row=0, column=0, rowspan=2, sticky="w")
 
         tk.Label(
-            hint_frame, text="Double-click: show tray content", font=("Arial", 10), fg="black", bg="white"
+            hint_frame, text="Click or use arrow keys: preview image below",
+            font=("Arial", 10), fg="black", bg="white",
         ).pack(anchor="w")
         tk.Label(
-            hint_frame, text="Right-click: rename description", font=("Arial", 10), fg="black", bg="white"
+            hint_frame, text="Right-click: rename description",
+            font=("Arial", 10), fg="black", bg="white",
         ).pack(anchor="w")
 
         self.status_text = tk.StringVar(value="IDLE - waiting for door to open")
@@ -101,10 +113,14 @@ class App:
         style = ttk.Style()
         style.configure("Big.TButton", font=("Arial", 13), padding=(12, 8))
 
-        manual_button = ttk.Button(top_frame, text="Manual Capture", command=self._open_manual_capture_window, style="Big.TButton")
+        manual_button = ttk.Button(
+            top_frame, text="Manual Capture", command=self._open_manual_capture_window, style="Big.TButton"
+        )
         manual_button.grid(row=0, column=3, padx=(0, 10), sticky="e")
 
-        history_button = ttk.Button(top_frame, text="History", command=self._open_history_window, style="Big.TButton")
+        history_button = ttk.Button(
+            top_frame, text="History", command=self._open_history_window, style="Big.TButton"
+        )
         history_button.grid(row=0, column=4, sticky="e")
 
         # Search - placed in the same column (1) as the status label, so
@@ -142,7 +158,7 @@ class App:
 
     def _handle_search_change(self, event=None) -> None:
         # Debounce: Tabelle nicht bei jedem einzelnen Tastendruck neu
-        # aufbauen, sondern erst 250ms nachdem zuletzt getippt wurde -
+        # aufbauen, sondern erst 300ms nachdem zuletzt getippt wurde -
         # verhindert bis zu 50 Dateisystem-Zugriffe pro Tastenanschlag
         if self._search_after_id is not None:
             self.root.after_cancel(self._search_after_id)
@@ -212,7 +228,7 @@ class App:
             if self.on_manual_capture:
                 self.on_manual_capture(tray_number)
         except Exception as exc:
-            self.log_event(f"Manual capture failed unexpectedly: {exc}", level=logging.ERROR)
+            print(f"[gui] Manual capture failed with an unexpected error: {exc}")
         finally:
             if self._manual_capture_window is not None and self._manual_capture_window.winfo_exists():
                 self._manual_capture_window.destroy()
@@ -226,7 +242,7 @@ class App:
             self._history_window.lift()
             self._history_window.focus_force()
             return
-        
+
         self._history_window = tk.Toplevel(self.root)
         self._history_window.title("History")
         self._history_window.geometry("500x400")
@@ -252,8 +268,7 @@ class App:
         timestamp = datetime.now().strftime("%H:%M:%S")
         entry = f"[{timestamp}] {text}"
         self._log_entries.append(entry)
-        if len(self._log_entries) > 500:
-            del self._log_entries[:-500]
+        self._log_entries = self._log_entries[-500:]
 
         logging.log(level, text)
 
@@ -279,13 +294,29 @@ class App:
             if line:
                 self._log_entries.append(line)
 
+    # --- Section 2: Resizable split - table (top) / image preview (bottom) --
 
-    # --- Section 2: Tray-table ----------------------------------------
+    def _build_main_section(self) -> None:
+        paned = ttk.Panedwindow(self.root, orient=tk.VERTICAL)
+        paned.pack(padx=20, pady=(0, 20), fill="both", expand=True)
 
-    def _build_tray_table(self) -> None:
-        table_frame = ttk.Frame(self.root)
-        table_frame.pack(padx=20, pady=(0, 20), fill="both", expand=True)
+        table_frame = ttk.Frame(paned)
+        preview_frame = ttk.Frame(paned)
 
+        # weight=1 on both -> roughly equal split by default; the user
+        # can still drag the sash between them to adjust
+        paned.add(table_frame, weight=1)
+        paned.add(preview_frame, weight=1)
+
+        # Preview pane must exist BEFORE the table is built - building
+        # the table ends with _populate_tray_table(), which calls
+        # _clear_preview(), which references the preview widgets
+        self._build_preview_pane(preview_frame)
+        self._build_tray_table(table_frame)
+
+    # --- Tray table ----------------------------------------------------
+
+    def _build_tray_table(self, table_frame: ttk.Frame) -> None:
         style = ttk.Style()
         style.configure("Treeview", font=("Arial", 14), rowheight=32)
         style.configure("Treeview.Heading", font=("Arial", 14, "bold"))
@@ -307,8 +338,9 @@ class App:
 
         # Right-clicking opens the context menu
         self.tray_table.bind("<Button-3>", self._handle_right_click)
-        # Double-clicking shows the latest captured image for that tray
-        self.tray_table.bind("<Double-1>", self._handle_double_click)
+        # Selecting a row - by click OR arrow keys, <<TreeviewSelect>>
+        # covers both - live-loads that tray's last image below
+        self.tray_table.bind("<<TreeviewSelect>>", self._handle_tray_selected)
 
         self._populate_tray_table()
 
@@ -336,9 +368,12 @@ class App:
             last_opened = self._get_last_capture_date(shelf_number)
             self.tray_table.insert("", "end", values=(shelf_number, description, last_opened))
 
+        # Table content changed - whatever was previewed no longer
+        # necessarily matches a visible/selected row
+        self._clear_preview()
+
     # --- Rename with right mouse button ----------------------------------------
 
-        
     def _handle_right_click(self, event) -> None:
         """Shows a context menu with a Rename option for the row under
         the cursor. Closes automatically on any click outside the menu."""
@@ -399,32 +434,66 @@ class App:
         self.tray_table.item(row_id, values=(shelf_number, new_description, last_opened))
         self.log_event(f"Tray {shelf_number} renamed: {new_description}")
 
-    # --- Double-click: show last captured image ---------------------------
+    # --- Live image preview (selection-driven) -----------------------------
 
-    def _handle_double_click(self, event) -> None:
-        row_id = self.tray_table.identify_row(event.y)
-        if not row_id:
+    def _build_preview_pane(self, preview_frame: ttk.Frame) -> None:
+        self._preview_info_var = tk.StringVar(value="Select a tray to preview its last captured image.")
+        info_bar = ttk.Label(preview_frame, textvariable=self._preview_info_var, font=("Arial", 12, "bold"))
+        info_bar.pack(pady=(5, 10))
+
+        self._preview_label = ttk.Label(preview_frame)
+        self._preview_label.pack(fill="both", expand=True)
+
+    def _handle_tray_selected(self, event=None) -> None:
+        # Debounce: while scrolling fast through the table with the
+        # arrow keys held down, don't decode/load a JPEG for every
+        # single intermediate row - only for the one the user actually
+        # settles on
+        if self._preview_after_id is not None:
+            self.root.after_cancel(self._preview_after_id)
+
+        self._preview_after_id = self.root.after(PREVIEW_DEBOUNCE_MS, self._apply_preview_selection)
+
+    def _apply_preview_selection(self) -> None:
+        self._preview_after_id = None
+
+        selection = self.tray_table.selection()
+        if not selection:
+            self._clear_preview()
             return
 
-        shelf_number_str, _, _ = self.tray_table.item(row_id, "values")
-        self._show_last_capture(int(shelf_number_str))
+        shelf_number_str, _, _ = self.tray_table.item(selection[0], "values")
+        self._load_preview_image(int(shelf_number_str))
 
-    def _show_last_capture(self, shelf_number: int) -> None:
-        """Finds the most recently saved picture for a tray and opens
-        it in an image window. Shows a message instead if none exist yet."""
+    def _clear_preview(self) -> None:
+        self._preview_photo = None
+        self._preview_label.configure(image="")
+        self._preview_info_var.set("Select a tray to preview its last captured image.")
 
+    def _load_preview_image(self, shelf_number: int) -> None:
         folder = config.OUTPUT_DIR / str(shelf_number)
         images = sorted(folder.glob("finalFrame_*.jpg")) if folder.exists() else []
 
         if not images:
-            messagebox.showinfo(
-                "No image",
-                f"No captured image found for tray {shelf_number}.",
-                parent=self.root,
-            )
+            self._preview_photo = None
+            self._preview_label.configure(image="")
+            self._preview_info_var.set(f"Tray {shelf_number} - no captured image yet.")
             return
 
-        self._open_image_window(shelf_number, images[-1])
+        image_path = images[-1]
+
+        try:
+            pil_image = Image.open(image_path)
+            pil_image.thumbnail((1400, 900))  # fit pane, keep aspect ratio
+            self._preview_photo = ImageTk.PhotoImage(pil_image)
+        except Exception as exc:
+            self._preview_photo = None
+            self._preview_label.configure(image="")
+            self._preview_info_var.set(f"Tray {shelf_number} - could not load image ({exc}).")
+            return
+
+        self._preview_label.configure(image=self._preview_photo)
+        self._preview_info_var.set(self._format_capture_info(shelf_number, image_path))
 
     def _format_capture_info(self, shelf_number: int, image_path: Path) -> str:
         """Builds a human-readable "Tray N - taken on DD-MM-YYYY at
@@ -437,41 +506,6 @@ class App:
             formatted = timestamp_str  # fallback, falls das Format mal nicht passt
 
         return f"Tray {shelf_number} - taken on {formatted}"
-
-    def _open_image_window(self, shelf_number: int, image_path: Path) -> None:
-        """Opens (or reuses, if already open) a window showing the given
-        image, with tray number and capture time shown below it."""
-
-        pil_image = Image.open(image_path)
-        pil_image.thumbnail((1200, 900))  # fit window, keep aspect ratio
-        self._image_photo = ImageTk.PhotoImage(pil_image)
-
-        info_text = self._format_capture_info(shelf_number, image_path)
-
-        if self._image_window is not None and self._image_window.winfo_exists():
-            self._image_window.title(f"Tray {shelf_number}")
-            self._image_label.configure(image=self._image_photo)
-            self._image_info_var.set(info_text)
-            self._image_window.lift()
-            self._image_window.focus_force()
-            return
-
-        self._image_window = tk.Toplevel(self.root)
-        self._image_window.title(f"Tray {shelf_number}")
-
-        self._image_label = ttk.Label(self._image_window, image=self._image_photo)
-        self._image_label.pack(padx=10, pady=(10, 0))
-
-        self._image_info_var = tk.StringVar(value=info_text)
-        info_bar = ttk.Label(self._image_window, textvariable=self._image_info_var, font=("Arial", 12))
-        info_bar.pack(padx=10, pady=10)
-
-        def _on_close() -> None:
-            self._image_window.destroy()
-            self._image_window = None
-            self._image_label = None
-
-        self._image_window.protocol("WM_DELETE_WINDOW", _on_close)
 
 
 if __name__ == "__main__":

@@ -1,20 +1,19 @@
 """
 GUI Layout:
 
-Section 1 - Row 1: (spacer) - Status (center) - (spacer) - Manual Capture button - History button
-Section 1 - Row 2: Search bar, wider, centered
+Section 1 - Row 1: (Infos) - Status (center)  - Manual Capture button - History button
+Section 1 - Row 2: Search bar (center)
 
-Section 2: Resizable split (ttk.Panedwindow, vertical) between:
+Section 2: table, picture viewer
     - Top pane: Table listing all tray's (1-50), scrollable
     - Bottom pane: Live image preview of the selected tray's last
       capture - updates automatically on click OR arrow-key
-      navigation (Treeview's <<TreeviewSelect>> event covers both)
 
 *functions:
     - History open seperate popup-Window
     - Right-clicking on a row allows to rename descriptions
     - search inventory
-    - selecting a row (click or arrow keys) live-loads its last
+    - selecting a row live-loads its last
       captured image in the preview pane below the table
     - manual capture: opens a small popup to enter a tray number and
       trigger a capture without waiting for the automatic door-sensor
@@ -33,6 +32,7 @@ from PIL import Image, ImageTk
 import config
 import inventory
 import logging
+import re
 
 
 STATUS_COLORS = {
@@ -44,11 +44,8 @@ STATUS_COLORS = {
 }
 
 # How long to wait after the selection last changed before actually
-# loading the image - avoids loading/decoding a JPEG on every single
-# intermediate row while scrolling quickly through the table with the
-# arrow keys held down.
+# loading the image
 PREVIEW_DEBOUNCE_MS = 150
-
 
 class App:
     def __init__(self, root: tk.Tk):
@@ -71,10 +68,11 @@ class App:
         self._build_top_section()
         self._build_main_section()
 
-    # --- Section 1: Status / Manual Capture / History (row 0),
-    #     Search (row 1) - shared grid so both rows center on the same
-    #     point regardless of the buttons' width on the right ----------
+        self.root.bind_all("<Up>", self._handle_global_arrow_key)
+        self.root.bind_all("<Down>", self._handle_global_arrow_key)
 
+
+    # --- Section 1: Status / Manual Capture / History (row 0), Search (row 1)  ----------
     def _build_top_section(self) -> None:
         top_frame = ttk.Frame(self.root)
         top_frame.pack(padx=20, pady=(20, 15), fill="x")
@@ -87,6 +85,7 @@ class App:
         hint_frame = tk.Frame(top_frame, bg="white", padx=10, pady=6)
         hint_frame.grid(row=0, column=0, rowspan=2, sticky="w")
 
+        #Info text
         tk.Label(
             hint_frame, text="Click or use arrow keys: preview image below",
             font=("Arial", 10), fg="black", bg="white",
@@ -97,8 +96,6 @@ class App:
         ).pack(anchor="w")
 
         self.status_text = tk.StringVar(value="IDLE - waiting for door to open")
-        # tk.Label statt ttk.Label, weil ttk dynamische bg/fg-Farben nicht
-        # sauber unterstuetzt (Styles waeren noetig)
         self.status_label = tk.Label(
             top_frame,
             textvariable=self.status_text,
@@ -123,9 +120,6 @@ class App:
         )
         history_button.grid(row=0, column=4, sticky="e")
 
-        # Search - placed in the same column (1) as the status label, so
-        # it's centered on exactly the same point, unaffected by the
-        # manual/history buttons sitting further right
         search_frame = ttk.Frame(top_frame)
         search_frame.grid(row=1, column=1, pady=(12, 0))
 
@@ -135,10 +129,6 @@ class App:
         search_entry.pack(side="left")
         search_entry.bind("<KeyRelease>", self._handle_search_change)
 
-        # Invisible mirror of the "search:" label on the right - without
-        # this, the entry box visually drifts right (the label only adds
-        # width on the left), so it looks off-center under the status
-        # box even though this whole frame is centered in the grid cell
         bg_color = style.lookup("TFrame", "background") or self.root.cget("bg")
         tk.Label(
             search_frame, text="search:", font=("Arial", 13), fg=bg_color, bg=bg_color
@@ -157,9 +147,7 @@ class App:
         self.root.update_idletasks()
 
     def _handle_search_change(self, event=None) -> None:
-        # Debounce: Tabelle nicht bei jedem einzelnen Tastendruck neu
-        # aufbauen, sondern erst 300ms nachdem zuletzt getippt wurde -
-        # verhindert bis zu 50 Dateisystem-Zugriffe pro Tastenanschlag
+        # Debounce so that table dont rebuild with every single keystroke
         if self._search_after_id is not None:
             self.root.after_cancel(self._search_after_id)
 
@@ -205,18 +193,21 @@ class App:
         self._manual_tray_var = tk.StringVar()
         entry = ttk.Entry(entry_frame, textvariable=self._manual_tray_var, width=10)
         entry.pack(side="left")
-        entry.focus_set()
 
         ttk.Button(
             self._manual_capture_window, text="Take a Picture", command=self._handle_manual_capture
         ).pack(pady=15)
 
+        self._manual_capture_window.bind("<Return>", lambda event: self._handle_manual_capture())
+
         def _on_close() -> None:
             self._manual_capture_window.destroy()
             self._manual_capture_window = None
             self._manual_tray_var = None
+            self.tray_table.focus_set()
 
         self._manual_capture_window.protocol("WM_DELETE_WINDOW", _on_close)
+        self._manual_capture_window.after(50, entry.focus_force)
 
     def _handle_manual_capture(self) -> None:
         tray_number = self._manual_tray_var.get().strip() if self._manual_tray_var else ""
@@ -228,12 +219,13 @@ class App:
             if self.on_manual_capture:
                 self.on_manual_capture(tray_number)
         except Exception as exc:
-            print(f"[gui] Manual capture failed with an unexpected error: {exc}")
+            self.log_event(f"Manual capture failed unexpectedly: {exc}", level=logging.ERROR)
         finally:
             if self._manual_capture_window is not None and self._manual_capture_window.winfo_exists():
                 self._manual_capture_window.destroy()
                 self._manual_capture_window = None
                 self._manual_tray_var = None
+            self.tray_table.focus_set()
 
     # --- History (separate pop-up window) --------------------------------
 
@@ -245,7 +237,7 @@ class App:
 
         self._history_window = tk.Toplevel(self.root)
         self._history_window.title("History")
-        self._history_window.geometry("500x400")
+        self._history_window.geometry("600x400")
         self._history_window.lift()
         self._history_window.attributes("-topmost", True)
         self._history_window.after(200, lambda: self._history_window.attributes("-topmost", False))
@@ -261,14 +253,17 @@ class App:
             self._history_window.destroy()
             self._history_window = None
             self._history_listbox = None
+            self.tray_table.focus_set()
 
         self._history_window.protocol("WM_DELETE_WINDOW", _on_close)
 
     def log_event(self, text: str, level: int = logging.INFO) -> None:
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        entry = f"[{timestamp}] {text}"
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        level_name = logging.getLevelName(level)
+        entry = f"{timestamp} [{level_name}] {text}"
         self._log_entries.append(entry)
-        self._log_entries = self._log_entries[-500:]
+        if len(self._log_entries) > 500:
+            del self._log_entries[:-500]
 
         logging.log(level, text)
 
@@ -303,14 +298,10 @@ class App:
         table_frame = ttk.Frame(paned)
         preview_frame = ttk.Frame(paned)
 
-        # weight=1 on both -> roughly equal split by default; the user
-        # can still drag the sash between them to adjust
+        # weight=1 on both -> roughly equal split by default; 
         paned.add(table_frame, weight=1)
         paned.add(preview_frame, weight=1)
 
-        # Preview pane must exist BEFORE the table is built - building
-        # the table ends with _populate_tray_table(), which calls
-        # _clear_preview(), which references the preview widgets
         self._build_preview_pane(preview_frame)
         self._build_tray_table(table_frame)
 
@@ -338,11 +329,10 @@ class App:
 
         # Right-clicking opens the context menu
         self.tray_table.bind("<Button-3>", self._handle_right_click)
-        # Selecting a row - by click OR arrow keys, <<TreeviewSelect>>
-        # covers both - live-loads that tray's last image below
         self.tray_table.bind("<<TreeviewSelect>>", self._handle_tray_selected)
 
         self._populate_tray_table()
+        self.tray_table.focus_set()
 
     def _get_last_capture_date(self, shelf_number: int) -> str:
         folder = config.OUTPUT_DIR / str(shelf_number)
@@ -368,8 +358,6 @@ class App:
             last_opened = self._get_last_capture_date(shelf_number)
             self.tray_table.insert("", "end", values=(shelf_number, description, last_opened))
 
-        # Table content changed - whatever was previewed no longer
-        # necessarily matches a visible/selected row
         self._clear_preview()
 
     # --- Rename with right mouse button ----------------------------------------
@@ -433,6 +421,7 @@ class App:
         # Update the table directly instead of reloading it entirely
         self.tray_table.item(row_id, values=(shelf_number, new_description, last_opened))
         self.log_event(f"Tray {shelf_number} renamed: {new_description}")
+        self.tray_table.focus_set()
 
     # --- Live image preview (selection-driven) -----------------------------
 
@@ -442,13 +431,45 @@ class App:
         info_bar.pack(pady=(5, 10))
 
         self._preview_label = ttk.Label(preview_frame)
-        self._preview_label.pack(fill="both", expand=True)
+        self._preview_label.pack(expand=True)
+
+    def _handle_global_arrow_key(self, event) -> Optional[str]:
+        """Lets Up/Down move the table selection even when focus is
+        elsewhere (e.g. the search box) - the table itself already
+        handles Up/Down natively when it has focus, so this only takes
+        over when some OTHER widget in the main window has focus.
+        Popup windows (History, Manual Capture) are excluded, so their
+        own keyboard handling isn't hijacked.
+        """
+        focused = self.root.focus_get()
+        if focused is None:
+            return None
+        if focused.winfo_toplevel() != self.root:
+            return None  
+        if focused is self.tray_table:
+            return None  # table already handles its own Up/Down natively
+
+        children = self.tray_table.get_children()
+        if not children:
+            return None
+
+        current = self.tray_table.selection()
+        index = children.index(current[0]) if current else -1
+
+        if event.keysym == "Down":
+            index = min(index + 1, len(children) - 1)
+        else:  # "Up"
+            index = max(index - 1, 0)
+
+        next_id = children[index]
+        self.tray_table.selection_set(next_id)
+        self.tray_table.see(next_id)
+        return "break"
 
     def _handle_tray_selected(self, event=None) -> None:
         # Debounce: while scrolling fast through the table with the
         # arrow keys held down, don't decode/load a JPEG for every
-        # single intermediate row - only for the one the user actually
-        # settles on
+        # single intermediate row - only for the one the user actually settles on
         if self._preview_after_id is not None:
             self.root.after_cancel(self._preview_after_id)
 

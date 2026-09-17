@@ -11,7 +11,6 @@ import cv2
 import sys
 
 
-
 # --- System -------------------------------------------------------
 if sys.platform.startswith("win32"):
     BASE_DIR = Path(r"C:\Users\mjansson\Kardex\neuesKardexSystem\dev")

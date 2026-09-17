@@ -22,16 +22,6 @@ def read_all() -> list[str]:
         return []
  
  
-def get_description(shelf_number: int) -> Optional[str]:
-    """Returns the description for a given shelf number, or None if
-    the shelf number is out of range."""
-    lines = read_all()
-    index = shelf_number - config.SHELF_LOWER_LIMIT
-    if 0 <= index < len(lines):
-        return lines[index]
-    return None
- 
- 
 def search(query: str) -> list[tuple[int, str]]:
     """Returns (shelf_number, description) pairs whose description
     contains the query (case-insensitive substring match).
@@ -56,7 +46,6 @@ def write_all(lines: list[str]) -> None:
         for line in lines:
             f.write(line + "\n")
  
-
 
 def update_description(shelf_number: int, new_description: str) -> None:
     """Updates a single shelf's description and writes the whole file

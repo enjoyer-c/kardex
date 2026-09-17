@@ -43,8 +43,9 @@ class flow_controll:
         self.app = app
         self.state = State.IDLE
         self.current_tablar_number: str | None = None
-
-        self.sensor = hall_sensor.HallSensor(on_change=self._on_door_change)
+        self.sensor = hall_sensor.HallSensor(
+            on_change=lambda is_open: self.app.root.after(0, self._on_door_change, is_open)
+        )
         self.app.on_manual_capture = self._handle_manual_capture_request
 
         self._update_status()
@@ -52,10 +53,10 @@ class flow_controll:
     def _update_status(self) -> None:
         texts = {
             State.IDLE: "IDLE - waiting for Door to open",
-            State.OUTBOUND: "tray is moving to final position",
-            State.AT_DELIVERY_POSITION: f"tray is on final position - tray # {self.current_tablar_number}",
-            State.CAPTURING_AND_STITCHING: "capature tray content",
-            State.RETURNING: "tray is moving back",
+            State.OUTBOUND: "DELIVERY - tray is moving",
+            State.AT_DELIVERY_POSITION: f"tray #{self.current_tablar_number}",
+            State.CAPTURING_AND_STITCHING: "CAPTURE - final image is beeing taken",
+            State.RETURNING: "RETURNING - tray is moving back",
         }
 
         self.app.set_status(texts[self.state], self.state.name)
@@ -108,7 +109,6 @@ class flow_controll:
         """Triggered from the GUI's manual-capture button. Only allowed
         while IDLE, so it can't collide with the automatic door-sensor
         flow (which also drives the cameras)."""
-
         if self.state != State.IDLE:
             self.app.log_event("Manual capture rejected - system is busy", level=logging.WARNING)
             return

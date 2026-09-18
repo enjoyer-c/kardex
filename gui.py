@@ -1,23 +1,30 @@
 """
 GUI Layout:
 
-Section 1 - Row 1: (Infos) - Status (center)  - Manual Capture button - History button
-Section 1 - Row 2: Search bar (center)
+Section 1 - Row 1: (spacer) - Status (center) - (spacer) - Camera Setup /
+    Manual Capture / History buttons
+Section 1 - Row 2: Search bar, wider, centered
 
-Section 2: table, picture viewer
+Section 2: Resizable split (ttk.Panedwindow, vertical) between:
     - Top pane: Table listing all tray's (1-50), scrollable
     - Bottom pane: Live image preview of the selected tray's last
       capture - updates automatically on click OR arrow-key
+      navigation (Treeview's <<TreeviewSelect>> event covers both)
 
 *functions:
     - History open seperate popup-Window
     - Right-clicking on a row allows to rename descriptions
     - search inventory
-    - selecting a row live-loads its last
+    - selecting a row (click or arrow keys) live-loads its last
       captured image in the preview pane below the table
     - manual capture: opens a small popup to enter a tray number and
       trigger a capture without waiting for the automatic door-sensor
       flow (meant as a fallback, e.g. if the door magnet/sensor fails)
+    - camera setup: opens a popup showing a snapshot from each
+      connected USB camera so the user can visually identify them and
+      set their left-to-right capture order - needed because by-id
+      device paths alone don't say which physical camera is which,
+      and the order isn't stable if cameras get unplugged/swapped
 """
 
 from __future__ import annotations
@@ -28,11 +35,12 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from PIL import Image, ImageTk
+import cv2
 
 import config
 import inventory
 import logging
-import re
+import camera_setup
 
 
 STATUS_COLORS = {
@@ -44,8 +52,11 @@ STATUS_COLORS = {
 }
 
 # How long to wait after the selection last changed before actually
-# loading the image
+# loading the image - avoids loading/decoding a JPEG on every single
+# intermediate row while scrolling quickly through the table with the
+# arrow keys held down.
 PREVIEW_DEBOUNCE_MS = 150
+
 
 class App:
     def __init__(self, root: tk.Tk):
@@ -62,30 +73,45 @@ class App:
         self._preview_after_id: Optional[str] = None
         self._preview_photo = None  # keep a reference, or Tk garbage-collects it
 
+        # Camera Setup popup state
+        self._camera_setup_window: Optional[tk.Toplevel] = None
+        self._camera_setup_order: list[str] = []
+        self._camera_setup_photos: dict[str, ImageTk.PhotoImage] = {}
+        self._camera_setup_slots_frame: Optional[ttk.Frame] = None
+
         # set from main.py - called when the user triggers a manual capture
         self.on_manual_capture: Optional[Callable[[str], None]] = None
 
         self._build_top_section()
         self._build_main_section()
 
+        # Up/Down should move the table selection even when some other
+        # widget in the main window has focus (e.g. the search box,
+        # which doesn't use Up/Down for anything itself). The table's
+        # own native Up/Down handling still applies when it itself has
+        # focus - see _handle_global_arrow_key.
         self.root.bind_all("<Up>", self._handle_global_arrow_key)
         self.root.bind_all("<Down>", self._handle_global_arrow_key)
 
+    # --- Section 1: Status / Camera Setup / Manual Capture / History
+    #     (row 0), Search (row 1) - shared grid so both rows center on
+    #     the same point. Column 2 stays a pure EMPTY spacer (mirrors
+    #     column 0) - buttons live in columns 3-5, never in 0-2, so the
+    #     status/search centering trick keeps working. -----------------
 
-    # --- Section 1: Status / Manual Capture / History (row 0), Search (row 1)  ----------
     def _build_top_section(self) -> None:
         top_frame = ttk.Frame(self.root)
         top_frame.pack(padx=20, pady=(20, 15), fill="x")
         top_frame.grid_columnconfigure(0, weight=1)  # left spacer
         top_frame.grid_columnconfigure(1, weight=0)  # status / search
-        top_frame.grid_columnconfigure(2, weight=1)  # right spacer
-        top_frame.grid_columnconfigure(3, weight=0)  # manual capture button
-        top_frame.grid_columnconfigure(4, weight=0)  # history button
+        top_frame.grid_columnconfigure(2, weight=1)  # right spacer (kept empty!)
+        top_frame.grid_columnconfigure(3, weight=0)  # camera setup button
+        top_frame.grid_columnconfigure(4, weight=0)  # manual capture button
+        top_frame.grid_columnconfigure(5, weight=0)  # history button
 
         hint_frame = tk.Frame(top_frame, bg="white", padx=10, pady=6)
         hint_frame.grid(row=0, column=0, rowspan=2, sticky="w")
 
-        #Info text
         tk.Label(
             hint_frame, text="Click or use arrow keys: preview image below",
             font=("Arial", 10), fg="black", bg="white",
@@ -96,6 +122,8 @@ class App:
         ).pack(anchor="w")
 
         self.status_text = tk.StringVar(value="IDLE - waiting for door to open")
+        # tk.Label statt ttk.Label, weil ttk dynamische bg/fg-Farben nicht
+        # sauber unterstuetzt (Styles waeren noetig)
         self.status_label = tk.Label(
             top_frame,
             textvariable=self.status_text,
@@ -110,16 +138,24 @@ class App:
         style = ttk.Style()
         style.configure("Big.TButton", font=("Arial", 13), padding=(12, 8))
 
+        camera_setup_button = ttk.Button(
+            top_frame, text="Camera Setup", command=self._open_camera_setup_window, style="Big.TButton"
+        )
+        camera_setup_button.grid(row=0, column=3, padx=(0, 10), sticky="e")
+
         manual_button = ttk.Button(
             top_frame, text="Manual Capture", command=self._open_manual_capture_window, style="Big.TButton"
         )
-        manual_button.grid(row=0, column=3, padx=(0, 10), sticky="e")
+        manual_button.grid(row=0, column=4, padx=(0, 10), sticky="e")
 
         history_button = ttk.Button(
             top_frame, text="History", command=self._open_history_window, style="Big.TButton"
         )
-        history_button.grid(row=0, column=4, sticky="e")
+        history_button.grid(row=0, column=5, sticky="e")
 
+        # Search - placed in the same column (1) as the status label, so
+        # it's centered on exactly the same point, unaffected by the
+        # buttons sitting further right
         search_frame = ttk.Frame(top_frame)
         search_frame.grid(row=1, column=1, pady=(12, 0))
 
@@ -129,6 +165,10 @@ class App:
         search_entry.pack(side="left")
         search_entry.bind("<KeyRelease>", self._handle_search_change)
 
+        # Invisible mirror of the "search:" label on the right - without
+        # this, the entry box visually drifts right (the label only adds
+        # width on the left), so it looks off-center under the status
+        # box even though this whole frame is centered in the grid cell
         bg_color = style.lookup("TFrame", "background") or self.root.cget("bg")
         tk.Label(
             search_frame, text="search:", font=("Arial", 13), fg=bg_color, bg=bg_color
@@ -147,7 +187,9 @@ class App:
         self.root.update_idletasks()
 
     def _handle_search_change(self, event=None) -> None:
-        # Debounce so that table dont rebuild with every single keystroke
+        # Debounce: Tabelle nicht bei jedem einzelnen Tastendruck neu
+        # aufbauen, sondern erst 300ms nachdem zuletzt getippt wurde -
+        # verhindert bis zu 50 Dateisystem-Zugriffe pro Tastenanschlag
         if self._search_after_id is not None:
             self.root.after_cancel(self._search_after_id)
 
@@ -198,6 +240,10 @@ class App:
             self._manual_capture_window, text="Take a Picture", command=self._handle_manual_capture
         ).pack(pady=15)
 
+        # Bound to the whole window (not just the entry) - focus_set()
+        # on a freshly created Toplevel isn't always reliable before the
+        # window is fully mapped, so binding only to the entry can miss
+        # the first Enter press
         self._manual_capture_window.bind("<Return>", lambda event: self._handle_manual_capture())
 
         def _on_close() -> None:
@@ -226,6 +272,135 @@ class App:
                 self._manual_capture_window = None
                 self._manual_tray_var = None
             self.tray_table.focus_set()
+
+    # --- Camera Setup (popup window) ---------------------------------------
+
+    def _open_camera_setup_window(self) -> None:
+        if self._camera_setup_window is not None and self._camera_setup_window.winfo_exists():
+            self._camera_setup_window.lift()
+            self._camera_setup_window.focus_force()
+            return
+
+        devices = camera_setup.discover_cameras()
+        if not devices:
+            messagebox.showinfo("Camera Setup", "No cameras found.", parent=self.root)
+            return
+
+        # Start from the currently saved order if it still matches what's
+        # connected, otherwise just use discovery order as a starting point
+        saved_order = camera_setup.load_camera_order()
+        if saved_order and set(saved_order) == set(devices):
+            self._camera_setup_order = list(saved_order)
+        else:
+            self._camera_setup_order = list(devices)
+
+        self._camera_setup_photos = {}
+
+        self._camera_setup_window = tk.Toplevel(self.root)
+        self._camera_setup_window.title("Camera Setup")
+        self._camera_setup_window.resizable(False, False)
+
+        ttk.Label(
+            self._camera_setup_window,
+            text="Identify each camera by its picture, then use the arrows to set left-to-right order.",
+            font=("Arial", 11),
+        ).pack(padx=15, pady=(15, 10))
+
+        self._camera_setup_slots_frame = ttk.Frame(self._camera_setup_window)
+        self._camera_setup_slots_frame.pack(padx=15, pady=(0, 10))
+
+        button_frame = ttk.Frame(self._camera_setup_window)
+        button_frame.pack(pady=(0, 15))
+        ttk.Button(button_frame, text="Save Order", command=self._save_camera_setup_order).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Cancel", command=self._close_camera_setup_window).pack(side="left", padx=5)
+
+        def _on_close() -> None:
+            self._close_camera_setup_window()
+
+        self._camera_setup_window.protocol("WM_DELETE_WINDOW", _on_close)
+
+        self._render_camera_setup_slots()
+        for device in self._camera_setup_order:
+            self._refresh_camera_setup_slot(device)
+
+    def _close_camera_setup_window(self) -> None:
+        if self._camera_setup_window is not None and self._camera_setup_window.winfo_exists():
+            self._camera_setup_window.destroy()
+        self._camera_setup_window = None
+        self._camera_setup_slots_frame = None
+        self.tray_table.focus_set()
+
+    def _render_camera_setup_slots(self) -> None:
+        """Rebuilds the row of camera slots from self._camera_setup_order -
+        called after any reorder, so the on-screen layout matches."""
+        for child in self._camera_setup_slots_frame.winfo_children():
+            child.destroy()
+
+        for index, device in enumerate(self._camera_setup_order):
+            slot = ttk.Frame(self._camera_setup_slots_frame, relief="groove", borderwidth=1, padding=10)
+            slot.grid(row=0, column=index, padx=5)
+
+            ttk.Label(slot, text=f"Position {index + 1}", font=("Arial", 11, "bold")).pack()
+            ttk.Label(slot, text=camera_setup.short_name(device), font=("Arial", 8), wraplength=200).pack(pady=(0, 5))
+
+            image_label = ttk.Label(slot)
+            image_label.pack()
+            photo = self._camera_setup_photos.get(device)
+            if photo is not None:
+                image_label.configure(image=photo)
+            else:
+                image_label.configure(text="(no preview yet)")
+
+            ttk.Button(
+                slot, text="Refresh", command=lambda d=device: self._refresh_camera_setup_slot(d)
+            ).pack(pady=(5, 5))
+
+            nav_frame = ttk.Frame(slot)
+            nav_frame.pack()
+            left_button = ttk.Button(
+                nav_frame, text="\u25c0", width=3,
+                command=lambda i=index: self._move_camera_setup_slot(i, -1),
+            )
+            left_button.pack(side="left")
+            if index == 0:
+                left_button.state(["disabled"])
+
+            right_button = ttk.Button(
+                nav_frame, text="\u25b6", width=3,
+                command=lambda i=index: self._move_camera_setup_slot(i, 1),
+            )
+            right_button.pack(side="left")
+            if index == len(self._camera_setup_order) - 1:
+                right_button.state(["disabled"])
+
+    def _refresh_camera_setup_slot(self, device: str) -> None:
+        frame = camera_setup.capture_snapshot(device)
+        if frame is None:
+            messagebox.showwarning(
+                "Camera Setup", f"Could not read from:\n{camera_setup.short_name(device)}",
+                parent=self._camera_setup_window,
+            )
+            return
+
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        pil_image = Image.fromarray(rgb)
+        pil_image.thumbnail((280, 210))
+        self._camera_setup_photos[device] = ImageTk.PhotoImage(pil_image)
+        self._render_camera_setup_slots()
+
+    def _move_camera_setup_slot(self, index: int, direction: int) -> None:
+        new_index = index + direction
+        if not (0 <= new_index < len(self._camera_setup_order)):
+            return
+        order = self._camera_setup_order
+        order[index], order[new_index] = order[new_index], order[index]
+        self._render_camera_setup_slots()
+
+    def _save_camera_setup_order(self) -> None:
+        camera_setup.save_camera_order(self._camera_setup_order)
+        config.USB_CAMERA_DEVICES = list(self._camera_setup_order)
+        self.log_event("Camera order updated via Camera Setup")
+        self._close_camera_setup_window()
 
     # --- History (separate pop-up window) --------------------------------
 
@@ -298,10 +473,12 @@ class App:
         table_frame = ttk.Frame(paned)
         preview_frame = ttk.Frame(paned)
 
-        # weight=1 on both -> roughly equal split by default; 
         paned.add(table_frame, weight=1)
-        paned.add(preview_frame, weight=1)
+        paned.add(preview_frame, weight=3)
 
+        # Preview pane must exist BEFORE the table is built - building
+        # the table ends with _populate_tray_table(), which calls
+        # _clear_preview(), which references the preview widgets
         self._build_preview_pane(preview_frame)
         self._build_tray_table(table_frame)
 
@@ -329,6 +506,8 @@ class App:
 
         # Right-clicking opens the context menu
         self.tray_table.bind("<Button-3>", self._handle_right_click)
+        # Selecting a row - by click OR arrow keys, <<TreeviewSelect>>
+        # covers both - live-loads that tray's last image below
         self.tray_table.bind("<<TreeviewSelect>>", self._handle_tray_selected)
 
         self._populate_tray_table()
@@ -358,6 +537,8 @@ class App:
             last_opened = self._get_last_capture_date(shelf_number)
             self.tray_table.insert("", "end", values=(shelf_number, description, last_opened))
 
+        # Table content changed - whatever was previewed no longer
+        # necessarily matches a visible/selected row
         self._clear_preview()
 
     # --- Rename with right mouse button ----------------------------------------
@@ -438,14 +619,14 @@ class App:
         elsewhere (e.g. the search box) - the table itself already
         handles Up/Down natively when it has focus, so this only takes
         over when some OTHER widget in the main window has focus.
-        Popup windows (History, Manual Capture) are excluded, so their
-        own keyboard handling isn't hijacked.
+        Popup windows (History, Manual Capture, Camera Setup) are
+        excluded, so their own keyboard handling isn't hijacked.
         """
         focused = self.root.focus_get()
         if focused is None:
             return None
         if focused.winfo_toplevel() != self.root:
-            return None  
+            return None  # a popup is focused - don't interfere
         if focused is self.tray_table:
             return None  # table already handles its own Up/Down natively
 
@@ -469,7 +650,8 @@ class App:
     def _handle_tray_selected(self, event=None) -> None:
         # Debounce: while scrolling fast through the table with the
         # arrow keys held down, don't decode/load a JPEG for every
-        # single intermediate row - only for the one the user actually settles on
+        # single intermediate row - only for the one the user actually
+        # settles on
         if self._preview_after_id is not None:
             self.root.after_cancel(self._preview_after_id)
 

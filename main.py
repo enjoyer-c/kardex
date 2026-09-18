@@ -123,7 +123,6 @@ class flow_controll:
         else:
             self.app.log_event(f"Error: {result.error_message}", level=logging.ERROR)
 
-        # Table's "last opened" column should reflect the new capture
         self.app._populate_tray_table(self.app.search_var.get())
 
 

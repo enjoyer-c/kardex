@@ -9,7 +9,7 @@ file works unchanged on both without manual edits.
 from pathlib import Path
 import cv2
 import sys
-
+import json
 
 # --- System -------------------------------------------------------
 if sys.platform.startswith("win32"):
@@ -26,13 +26,34 @@ else:
     CAP_BACKEND = cv2.CAP_ANY
 
 # --- USB-Cams ---------------------------------------------------------------
-USB_CAMERA_DEVICES = [
-    "/dev/v4l/by-path/platform-3f980000.usb-usb-0:1.1.2.1:1.0-video-index0",
-    "/dev/v4l/by-path/platform-3f980000.usb-usb-0:1.1.2.2:1.0-video-index0",
-]
-USB_CAMERA_FOURCC = "MJPG"              
-USB_CAMERA_RESOLUTION = (1280, 720)     # (width, height)
-USB_CAMERA_WARMUP_FRAMES = 15           # “Disposable frames” for exposure/focus
+CAMERA_ORDER_FILE = BASE_DIR / "camera_order.json"
+
+
+def _load_camera_devices() -> list[str]:
+    """Loads the saved camera order (from the Camera Setup window). If
+    none has been saved yet, falls back to auto-discovering connected
+    cameras in whatever order udev reports them - not guaranteed to be
+    left/right correct until someone uses Camera Setup once."""
+    if CAMERA_ORDER_FILE.exists():
+        try:
+            with open(CAMERA_ORDER_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            devices = data.get("devices", [])
+            if isinstance(devices, list) and all(isinstance(d, str) for d in devices):
+                return devices
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    by_id_dir = Path("/dev/v4l/by-id")
+    if by_id_dir.exists():
+        return sorted(str(p) for p in by_id_dir.iterdir() if p.name.endswith("video-index0"))
+    return []
+
+
+USB_CAMERA_DEVICES = _load_camera_devices()
+USB_CAMERA_FOURCC = "MJPG"
+USB_CAMERA_RESOLUTION = (1280, 720)
+USB_CAMERA_WARMUP_FRAMES = 15
 
 # --- Stitching -------------------------------------------------------------
 STITCHER_MODE = cv2.Stitcher_SCANS      #vaible modes: SCANS or PANORAMA

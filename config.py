@@ -29,11 +29,20 @@ else:
 CAMERA_ORDER_FILE = BASE_DIR / "camera_order.json"
 
 
+
 def _load_camera_devices() -> list[str]:
-    """Loads the saved camera order (from the Camera Setup window). If
-    none has been saved yet, falls back to auto-discovering connected
-    cameras in whatever order udev reports them - not guaranteed to be
-    left/right correct until someone uses Camera Setup once."""
+    """Loads the saved camera order (set via the Camera Setup window).
+    If none has been saved yet, falls back to auto-discovering
+    connected cameras via /dev/v4l/by-path (board-independent, unlike
+    by-path being tied to the physical port - by-id was tried first
+    but collides for identical camera models like two Logitech C920s,
+    which often report the same or an empty serial number).
+ 
+    This fallback listing is NOT deduplicated/verified the way
+    camera_setup.discover_cameras() is - it's only a bootstrap before
+    Camera Setup has ever been used. Run Camera Setup once after
+    setting up a new Pi to lock in a verified, working order.
+    """
     if CAMERA_ORDER_FILE.exists():
         try:
             with open(CAMERA_ORDER_FILE, "r", encoding="utf-8") as f:
@@ -43,11 +52,12 @@ def _load_camera_devices() -> list[str]:
                 return devices
         except (json.JSONDecodeError, OSError):
             pass
-
+ 
     by_path_dir = Path("/dev/v4l/by-path")
     if by_path_dir.exists():
         return sorted(str(p) for p in by_path_dir.iterdir() if p.name.endswith("video-index0"))
     return []
+
 
 
 USB_CAMERA_DEVICES = _load_camera_devices()

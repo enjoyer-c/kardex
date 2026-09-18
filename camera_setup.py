@@ -13,12 +13,15 @@ import config
 
 
 def discover_cameras(max_cameras: int = 4) -> list[str]:
-    """Returns by-id device paths of currently connected USB cameras,
-    in whatever order udev happens to report them"""
-    by_id_dir = Path("/dev/v4l/by-id")
-    if not by_id_dir.exists():
+    """Returns by-path device paths of currently connected USB cameras.
+    by-path (not by-id) is used deliberately: identical camera models 
+    often report the same or an empty serial number, which makes udev's 
+    by-id names collide - by-path is keyed to the physical USB port instead, 
+    so it stays unique even for identical camera models."""
+    by_path_dir = Path("/dev/v4l/by-path")
+    if not by_path_dir.exists():
         return []
-    devices = sorted(str(p) for p in by_id_dir.iterdir() if p.name.endswith("video-index0"))
+    devices = sorted(str(p) for p in by_path_dir.iterdir() if p.name.endswith("video-index0"))
     return devices[:max_cameras]
 
 

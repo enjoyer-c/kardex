@@ -44,9 +44,9 @@ def _load_camera_devices() -> list[str]:
         except (json.JSONDecodeError, OSError):
             pass
 
-    by_id_dir = Path("/dev/v4l/by-id")
-    if by_id_dir.exists():
-        return sorted(str(p) for p in by_id_dir.iterdir() if p.name.endswith("video-index0"))
+    by_path_dir = Path("/dev/v4l/by-path")
+    if by_path_dir.exists():
+        return sorted(str(p) for p in by_path_dir.iterdir() if p.name.endswith("video-index0"))
     return []
 
 

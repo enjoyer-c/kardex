@@ -55,8 +55,12 @@ def _load_camera_devices() -> list[str]:
  
     by_path_dir = Path("/dev/v4l/by-path")
     if by_path_dir.exists():
-        return sorted(str(p) for p in by_path_dir.iterdir() if p.name.endswith("video-index0"))
+        return sorted(
+            str(p) for p in by_path_dir.iterdir()
+            if p.name.endswith("video-index0") and "-usb-" in p.name
+        )
     return []
+
 
 
 

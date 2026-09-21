@@ -206,6 +206,9 @@ def main() -> None:
 
     root = tk.Tk()
     root.report_callback_exception = _handle_callback_exception
+    if sys.platform.startswith("linux"):
+        root.attributes("-fullscreen", True)
+        root.bind("<Escape>", lambda event: root.attributes("-fullscreen", False))
 
     app = gui.App(root)
     app.load_history_from_log_file(config.LOG_FILE)

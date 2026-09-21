@@ -193,11 +193,6 @@ class flow_controll:
 
 
 def _handle_callback_exception(exc, val, tb) -> None:
-    """Overrides Tkinter's default GUI-callback exception handler.
-    Normally, an exception raised inside a button click / event
-    binding is only printed to stderr and easily lost (especially
-    over VNC, or if nobody's watching the terminal) - this makes sure
-    it always ends up in the persistent log file too."""
     logging.error("Unhandled GUI exception:\n%s", "".join(traceback.format_exception(exc, val, tb)))
 
 

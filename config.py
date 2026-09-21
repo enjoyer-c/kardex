@@ -28,8 +28,6 @@ else:
 # --- USB-Cams ---------------------------------------------------------------
 CAMERA_ORDER_FILE = BASE_DIR / "camera_order.json"
 
-
-
 def _load_camera_devices() -> list[str]:
     """Loads the saved camera order (set via the Camera Setup window).
     If none has been saved yet, falls back to auto-discovering
@@ -61,9 +59,6 @@ def _load_camera_devices() -> list[str]:
         )
     return []
 
-
-
-
 USB_CAMERA_DEVICES = _load_camera_devices()
 USB_CAMERA_FOURCC = "MJPG"
 USB_CAMERA_RESOLUTION = (1280, 720)
@@ -81,7 +76,7 @@ QR_SCAN_TIMEOUT_S = 10.0                # max waiting time for QR-Code [s]
 
 # --- Hall-Sensor -----------------------------------------------------------
 HALL_SENSOR_GPIO = 17 #Pin11
-HALL_SENSOR_BOUNCE_TIME_MS = 50
+HALL_SENSOR_BOUNCE_TIME_MS = 350
 
 # --- Data -----------------------------------------------------------------
 if sys.platform.startswith("linux"):

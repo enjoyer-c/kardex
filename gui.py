@@ -36,6 +36,8 @@ from typing import Callable, Optional
 
 from PIL import Image, ImageTk
 import cv2
+import subprocess
+import sys
 
 import config
 import inventory
@@ -337,6 +339,16 @@ class App:
         ttk.Button(button_frame, text="Save Order", command=self._save_camera_setup_order).pack(side="left", padx=5)
         ttk.Button(button_frame, text="Cancel", command=self._close_camera_setup_window).pack(side="left", padx=5)
 
+        # Ribbon cam (QR scanner) needs a real live view for fine focus/
+        # position adjustment - a single snapshot isn't enough for that,
+        # unlike the USB cams above, which the snapshot+refresh already
+        # covers well enough. Opens as a separate process (see
+        # Setup_RibbonCAM.py), not embedded in this window.
+        ttk.Button(
+            self._camera_setup_window, text="Live: Ribbon Cam (QR Focus)",
+            command=self._launch_ribbon_cam_preview,
+        ).pack(pady=(0, 15))
+
         def _on_close() -> None:
             self._close_camera_setup_window()
 
@@ -424,6 +436,26 @@ class App:
         config.USB_CAMERA_DEVICES = list(self._camera_setup_order)
         self.log_event("Camera order updated via Camera Setup")
         self._close_camera_setup_window()
+
+    def _launch_ribbon_cam_preview(self) -> None:
+        """Starts Setup_RibbonCAM.py as a separate process - a live
+        cv2.imshow window outside of Tkinter, for fine-tuning the
+        ribbon camera's focus/position while watching QR detection in
+        real time."""
+        script_path = Path(__file__).resolve().parent / "Setup_RibbonCAM.py"
+        if not script_path.exists():
+            messagebox.showwarning(
+                "Camera Setup", f"Script not found:\n{script_path}", parent=self._camera_setup_window
+            )
+            return
+
+        messagebox.showinfo(
+            "Camera Setup",
+            "Opens in a separate window. Press 'q' in that window when done.\n"
+            "Don't run this while a tray is currently being captured.",
+            parent=self._camera_setup_window,
+        )
+        subprocess.Popen([sys.executable, str(script_path)])
 
     # --- History (separate pop-up window) --------------------------------
 
@@ -710,7 +742,7 @@ class App:
 
         try:
             pil_image = Image.open(image_path)
-            pil_image.thumbnail((1400, 900))  # fit pane, keep aspect ratio
+            pil_image.thumbnail((1400, 900))  
             self._preview_photo = ImageTk.PhotoImage(pil_image)
         except Exception as exc:
             self._preview_photo = None
@@ -729,7 +761,7 @@ class App:
             timestamp = datetime.strptime(timestamp_str, config.TIMESTAMP_FORMAT)
             formatted = timestamp.strftime("%d-%m-%Y at %H:%M:%S")
         except ValueError:
-            formatted = timestamp_str  # fallback, falls das Format mal nicht passt
+            formatted = timestamp_str 
 
         return f"Tray {tray_number} - taken on {formatted}"
 

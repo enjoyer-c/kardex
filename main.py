@@ -202,8 +202,10 @@ def main() -> None:
     root = tk.Tk()
     root.report_callback_exception = _handle_callback_exception
     if sys.platform.startswith("linux"):
-        root.attributes("-fullscreen", True)
-        root.bind("<Escape>", lambda event: root.attributes("-fullscreen", False))
+        try:
+            root.attributes("-zoomed", True)
+        except tk.TclError:
+            root.geometry(f"{root.winfo_screenwidth()}x{root.winfo_screenheight()}+0+0")
 
     app = gui.App(root)
     app.load_history_from_log_file(config.LOG_FILE)

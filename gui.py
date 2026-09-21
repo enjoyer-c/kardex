@@ -120,13 +120,18 @@ class App:
         hint_frame.grid(row=0, column=0, rowspan=2, sticky="w")
 
         tk.Label(
-            hint_frame, text="Click or use arrow keys: preview image below",
+            hint_frame, text="• Click or use arrow keys: preview image below",
             font=("Arial", 10), fg="black", bg="white",
         ).pack(anchor="w")
         tk.Label(
-            hint_frame, text="Right-click: rename description",
+            hint_frame, text="• Right-click: rename description",
             font=("Arial", 10), fg="black", bg="white",
         ).pack(anchor="w")
+        tk.Label(
+            hint_frame, text="• Camera Setup takes a few seconds to load",
+            font=("Arial", 10), fg="black", bg="white",
+        ).pack(anchor="w")
+
 
         self.status_text = tk.StringVar(value="IDLE - waiting for door to open")
         # tk.Label statt ttk.Label, weil ttk dynamische bg/fg-Farben nicht
@@ -340,10 +345,7 @@ class App:
         ttk.Button(button_frame, text="Cancel", command=self._close_camera_setup_window).pack(side="left", padx=5)
 
         # Ribbon cam (QR scanner) needs a real live view for fine focus/
-        # position adjustment - a single snapshot isn't enough for that,
-        # unlike the USB cams above, which the snapshot+refresh already
-        # covers well enough. Opens as a separate process (see
-        # Setup_RibbonCAM.py), not embedded in this window.
+        # position adjustment. Opens as a separate process.
         ttk.Button(
             self._camera_setup_window, text="Live: Ribbon Cam (QR Focus)",
             command=self._launch_ribbon_cam_preview,

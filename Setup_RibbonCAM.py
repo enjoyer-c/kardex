@@ -29,8 +29,6 @@ def main() -> None:
     picam.configure(preview_config)
     picam.start()
 
-    print("Live-Feed laeuft - 'q' im Fenster druecken zum Beenden.")
-
     try:
         while True:
             frame = picam.capture_array()

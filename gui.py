@@ -82,8 +82,13 @@ class App:
         # set from main.py - called when the user triggers a manual capture
         self.on_manual_capture: Optional[Callable[[str], None]] = None
 
+        self._button_icons: dict[str, ImageTk.PhotoImage] = {}
+        self._load_button_icons()
+
         self._build_top_section()
         self._build_main_section()
+
+        
 
         # Up/Down should move the table selection even when some other
         # widget in the main window has focus (e.g. the search box,
@@ -105,9 +110,9 @@ class App:
         top_frame.grid_columnconfigure(0, weight=1)  # left spacer
         top_frame.grid_columnconfigure(1, weight=0)  # status / search
         top_frame.grid_columnconfigure(2, weight=1)  # right spacer (kept empty!)
-        top_frame.grid_columnconfigure(3, weight=0)  # camera setup button
-        top_frame.grid_columnconfigure(4, weight=0)  # manual capture button
-        top_frame.grid_columnconfigure(5, weight=0)  # history button
+        top_frame.grid_columnconfigure(3, weight=0)  # manual capture button
+        top_frame.grid_columnconfigure(4, weight=0)  # history button
+        top_frame.grid_columnconfigure(5, weight=0)  # camera setup button
 
         hint_frame = tk.Frame(top_frame, bg="white", padx=10, pady=6)
         hint_frame.grid(row=0, column=0, rowspan=2, sticky="w")
@@ -138,20 +143,37 @@ class App:
         style = ttk.Style()
         style.configure("Big.TButton", font=("Arial", 13), padding=(12, 8))
 
-        camera_setup_button = ttk.Button(
-            top_frame, text="Camera Setup", command=self._open_camera_setup_window, style="Big.TButton"
-        )
-        camera_setup_button.grid(row=0, column=3, padx=(0, 10), sticky="e")
-
+        # Manual Capture and History are everyday-use buttons (bigger,
+        # prominent). Camera Setup is only for the rare troubleshooting
+        # case (cameras swapped/unplugged) - kept smaller, plain style,
+        # and placed furthest to the right, away from Manual Capture,
+        # so the two aren't easy to mix up on a quick click.
         manual_button = ttk.Button(
-            top_frame, text="Manual Capture", command=self._open_manual_capture_window, style="Big.TButton"
+            top_frame, text="Manual Capture", image=self._button_icons.get("manual_capture"),
+            compound="left", command=self._open_manual_capture_window, style="Big.TButton"
         )
-        manual_button.grid(row=0, column=4, padx=(0, 10), sticky="e")
+        manual_button.grid(row=0, column=3, padx=(0, 10), sticky="e")
 
+        stacked_button_width = 14
+        
         history_button = ttk.Button(
-            top_frame, text="History", command=self._open_history_window, style="Big.TButton"
+            top_frame, text="History", image=self._button_icons.get("history"),
+            compound="left", command=self._open_history_window, style="Big.TButton",
+            width=stacked_button_width,
         )
-        history_button.grid(row=0, column=5, sticky="e")
+        history_button.grid(row=0, column=4, sticky="e")
+
+        # Camera Setup sits on its own row, right below History - same
+        # size as the other buttons, but visually set apart by position
+        # rather than by being shrunk down, since a smaller button next
+        # to two big ones looked unbalanced.
+
+        camera_setup_button = ttk.Button(
+            top_frame, text="Camera Setup", image=self._button_icons.get("camera_setup"),
+            compound="left", command=self._open_camera_setup_window, style="Big.TButton",
+            width=stacked_button_width,
+        )
+        camera_setup_button.grid(row=1, column=4, pady=(12, 0), sticky="e")
 
         # Search - placed in the same column (1) as the status label, so
         # it's centered on exactly the same point, unaffected by the
@@ -173,6 +195,7 @@ class App:
         tk.Label(
             search_frame, text="search:", font=("Arial", 13), fg=bg_color, bg=bg_color
         ).pack(side="left", padx=(8, 0))
+
 
     def set_status(self, text: str, state_name: str = "IDLE") -> None:
         self.status_text.set(text)
@@ -513,8 +536,8 @@ class App:
         self._populate_tray_table()
         self.tray_table.focus_set()
 
-    def _get_last_capture_date(self, shelf_number: int) -> str:
-        folder = config.OUTPUT_DIR / str(shelf_number)
+    def _get_last_capture_date(self, tray_number: int) -> str:
+        folder = config.OUTPUT_DIR / str(tray_number)
         images = sorted(folder.glob("finalFrame_*.jpg")) if folder.exists() else []
         if not images:
             return "-"
@@ -531,11 +554,11 @@ class App:
         if filter_query.strip():
             rows = inventory.search(filter_query)
         else:
-            rows = list(enumerate(inventory.read_all(), start=config.SHELF_LOWER_LIMIT))
+            rows = list(enumerate(inventory.read_all(), start=config.TRAY_LOWER_LIMIT))
 
-        for shelf_number, description in rows:
-            last_opened = self._get_last_capture_date(shelf_number)
-            self.tray_table.insert("", "end", values=(shelf_number, description, last_opened))
+        for tray_number, description in rows:
+            last_opened = self._get_last_capture_date(tray_number)
+            self.tray_table.insert("", "end", values=(tray_number, description, last_opened))
 
         # Table content changed - whatever was previewed no longer
         # necessarily matches a visible/selected row
@@ -571,11 +594,11 @@ class App:
         """Prompts for a new description, confirms with the user, then
         writes it to Inventory.txt and updates the table in place."""
 
-        shelf_number_str, current_description, last_opened = self.tray_table.item(row_id, "values")
+        tray_number_str, current_description, last_opened = self.tray_table.item(row_id, "values")
 
         new_description = simpledialog.askstring(
             "Rename",
-            f"New description for tray {shelf_number_str}:",
+            f"New description for tray {tray_number_str}:",
             initialvalue=current_description,
             parent=self.root,
         )
@@ -588,7 +611,7 @@ class App:
 
         confirmed = messagebox.askyesno(
             "Confirm Rename",
-            f"Tray {shelf_number_str} rename?\n\n"
+            f"Tray {tray_number_str} rename?\n\n"
             f"Old: {current_description}\n"
             f"New: {new_description}",
             parent=self.root,
@@ -596,12 +619,12 @@ class App:
         if not confirmed:
             return
 
-        shelf_number = int(shelf_number_str)
-        inventory.update_description(shelf_number, new_description)
+        tray_number = int(tray_number_str)
+        inventory.update_description(tray_number, new_description)
 
         # Update the table directly instead of reloading it entirely
-        self.tray_table.item(row_id, values=(shelf_number, new_description, last_opened))
-        self.log_event(f"Tray {shelf_number} renamed: {new_description}")
+        self.tray_table.item(row_id, values=(tray_number, new_description, last_opened))
+        self.log_event(f"Tray {tray_number} renamed: {new_description}")
         self.tray_table.focus_set()
 
     # --- Live image preview (selection-driven) -----------------------------
@@ -665,22 +688,22 @@ class App:
             self._clear_preview()
             return
 
-        shelf_number_str, _, _ = self.tray_table.item(selection[0], "values")
-        self._load_preview_image(int(shelf_number_str))
+        tray_number_str, _, _ = self.tray_table.item(selection[0], "values")
+        self._load_preview_image(int(tray_number_str))
 
     def _clear_preview(self) -> None:
         self._preview_photo = None
         self._preview_label.configure(image="")
         self._preview_info_var.set("Select a tray to preview its last captured image.")
 
-    def _load_preview_image(self, shelf_number: int) -> None:
-        folder = config.OUTPUT_DIR / str(shelf_number)
+    def _load_preview_image(self, tray_number: int) -> None:
+        folder = config.OUTPUT_DIR / str(tray_number)
         images = sorted(folder.glob("finalFrame_*.jpg")) if folder.exists() else []
 
         if not images:
             self._preview_photo = None
             self._preview_label.configure(image="")
-            self._preview_info_var.set(f"Tray {shelf_number} - no captured image yet.")
+            self._preview_info_var.set(f"Tray {tray_number} - no captured image yet.")
             return
 
         image_path = images[-1]
@@ -692,13 +715,13 @@ class App:
         except Exception as exc:
             self._preview_photo = None
             self._preview_label.configure(image="")
-            self._preview_info_var.set(f"Tray {shelf_number} - could not load image ({exc}).")
+            self._preview_info_var.set(f"Tray {tray_number} - could not load image ({exc}).")
             return
 
         self._preview_label.configure(image=self._preview_photo)
-        self._preview_info_var.set(self._format_capture_info(shelf_number, image_path))
+        self._preview_info_var.set(self._format_capture_info(tray_number, image_path))
 
-    def _format_capture_info(self, shelf_number: int, image_path: Path) -> str:
+    def _format_capture_info(self, tray_number: int, image_path: Path) -> str:
         """Builds a human-readable "Tray N - taken on DD-MM-YYYY at
         HH:MM:SS" string from the timestamp encoded in the filename."""
         timestamp_str = image_path.stem.replace("finalFrame_", "")
@@ -708,7 +731,16 @@ class App:
         except ValueError:
             formatted = timestamp_str  # fallback, falls das Format mal nicht passt
 
-        return f"Tray {shelf_number} - taken on {formatted}"
+        return f"Tray {tray_number} - taken on {formatted}"
+
+    def _load_button_icons(self) -> None:
+        icons_dir = Path(__file__).resolve().parent / "icons"
+        names = ["history", "camera_setup", "manual_capture"]
+        for name in names:
+            path = icons_dir / f"{name}.png"
+            if path.exists():
+                self._button_icons[name] = ImageTk.PhotoImage(Image.open(path))
+
 
 
 if __name__ == "__main__":

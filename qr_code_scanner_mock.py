@@ -15,5 +15,5 @@ class QRResult:
 
 
 def wait_for_qr(timeout_s: float = config.QR_SCAN_TIMEOUT_S) -> Optional[QRResult]:
-    print("[qr_code_scanner_mock] Simulierter QR-Scan - liefert Tablar 1")
+    print("[qr_code_scanner_mock] Simulates a QR scan — delivers tray 1")
     return QRResult(data="1", qr_type="QRCODE")

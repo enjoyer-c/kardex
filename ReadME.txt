@@ -26,10 +26,13 @@
 
 
 
-## Process Flow
+
+# Important: Don't use Setuptools for Ribbon Cam and USB Cam's while main.py is running.
+
+
 
 # =============================================================================
-# PROCESS LOGIC
+# Process Flow
 # =============================================================================
 #
 # 1. IDLE

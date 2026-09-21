@@ -3,7 +3,7 @@ Mock camera_stitching for Windows testing.
 
 Tries to use real webcams. If a camera isn't available, a synthetic 
 placeholder frame is generated instead,
-so the rest of the pipeline (stitching, saving, shelf folders) can
+so the rest of the pipeline (stitching, saving, tray folders) can
 still be exercised without any real camera hardware attached.
 """
 
@@ -26,9 +26,9 @@ class StitchResult:
 MOCK_CAMERA_INDICES = [0, 1]
 
 
-def create_shelf_folders() -> None:
-    for shelf_number in range(config.SHELF_LOWER_LIMIT, config.SHELF_UPPER_LIMIT + 1):
-        folder = config.OUTPUT_DIR / str(shelf_number)
+def create_tray_folders() -> None:
+    for tray_number in range(config.TRAY_LOWER_LIMIT, config.TRAY_UPPER_LIMIT + 1):
+        folder = config.OUTPUT_DIR / str(tray_number)
         folder.mkdir(parents=True, exist_ok=True)
 
 
@@ -64,16 +64,16 @@ def _synthetic_frame(label: str):
     return frame
 
 
-def capture_and_stitch(camera_devices, tablar_number: str) -> StitchResult:
+def capture_and_stitch(camera_devices, tray_number: str) -> StitchResult:
     frames = []
     for i, index in enumerate(MOCK_CAMERA_INDICES):
         frame = _capture_real(index)
         if frame is None:
             print(f"[camera_stitching_mock] Camera {index} not available - using synthetic image.")
-            frame = _synthetic_frame(f"Mock Cam {i + 1} - Tray {tablar_number}")
+            frame = _synthetic_frame(f"Mock Cam {i + 1} - Tray {tray_number}")
         frames.append(frame)
 
-    output_dir = config.OUTPUT_DIR / tablar_number
+    output_dir = config.OUTPUT_DIR / tray_number
     output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime(config.TIMESTAMP_FORMAT)
 
@@ -93,12 +93,12 @@ def capture_and_stitch(camera_devices, tablar_number: str) -> StitchResult:
     pano_path = output_dir / f"finalFrame_{timestamp}.jpg"
     cv2.imwrite(str(pano_path), panorama)
 
-    enforce_max_images(output_dir, config.MAX_IMAGES_PER_TABLAR)
+    enforce_max_images(output_dir, config.MAX_IMAGES_PER_TRAY)
 
     return StitchResult(success=True, panorama_path=pano_path)
 
 
 if __name__ == "__main__":
-    create_shelf_folders()
-    result = capture_and_stitch([], tablar_number="TestShelf01")
+    create_tray_folders()
+    result = capture_and_stitch([], tray_number="TestTray01")
     print(result)

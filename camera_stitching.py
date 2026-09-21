@@ -39,11 +39,11 @@ class StitchResult:
 _capture_lock = threading.Lock()
 
 
-def create_shelf_folders() -> None:
+def create_tray_folders() -> None:
     """Creates one output folder per tray number, if it doesn't exist yet.
     Meant to be called once at program startup."""
-    for shelf_number in range(config.SHELF_LOWER_LIMIT, config.SHELF_UPPER_LIMIT + 1):
-        folder = config.OUTPUT_DIR / str(shelf_number)
+    for tray_number in range(config.TRAY_LOWER_LIMIT, config.TRAY_UPPER_LIMIT + 1):
+        folder = config.OUTPUT_DIR / str(tray_number)
         folder.mkdir(parents=True, exist_ok=True)
 
 
@@ -91,7 +91,7 @@ def capture_one(device: str) -> tuple[bool, "cv2.typing.MatLike | None", str | N
         cam.release()
 
 
-def capture_and_stitch(camera_devices: list[str], tablar_number: str) -> StitchResult:
+def capture_and_stitch(camera_devices: list[str], tray_number: str) -> StitchResult:
     """Captures one frame from each camera IN PARALLEL (each camera is
     still individually opened, warmed up, read and released - see
     capture_one), stitches them, and saves the result. Refuses to run
@@ -125,7 +125,7 @@ def capture_and_stitch(camera_devices: list[str], tablar_number: str) -> StitchR
                 return StitchResult(success=False, error_message=error_message)
             frames.append(frame)
 
-        output_dir = config.OUTPUT_DIR / tablar_number
+        output_dir = config.OUTPUT_DIR / tray_number
         output_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime(config.TIMESTAMP_FORMAT)
 
@@ -139,7 +139,7 @@ def capture_and_stitch(camera_devices: list[str], tablar_number: str) -> StitchR
         pano_path = output_dir / f"finalFrame_{timestamp}.jpg"
         cv2.imwrite(str(pano_path), panorama)
 
-        enforce_max_images(output_dir, config.MAX_IMAGES_PER_TABLAR)
+        enforce_max_images(output_dir, config.MAX_IMAGES_PER_TRAY)
 
         return StitchResult(success=True, panorama_path=pano_path)
     finally:

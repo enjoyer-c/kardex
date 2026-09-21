@@ -15,7 +15,7 @@ class HallSensor:
         self._on_change = on_change
         self._is_open = False
 
-        print("[hall_sensor_mock] Enter druecken zum Umschalten der Tuer (offen/zu).")
+        print("[hall_sensor_mock]  Press Enter to toggle the door (open/closed).")
 
         self._thread = threading.Thread(target=self._listen, daemon=True)
         self._thread.start()
@@ -24,8 +24,8 @@ class HallSensor:
         while True:
             input()  # wait for ENTER key 
             self._is_open = not self._is_open
-            state_text = "OFFEN" if self._is_open else "ZU"
-            print(f"[hall_sensor_mock] Tuer ist jetzt: {state_text}")
+            state_text = "OPEN" if self._is_open else "CLOSE"
+            print(f"[hall_sensor_mock] DOOR STATUS: {state_text}")
 
             if self._on_change:
                 self._on_change(self._is_open)

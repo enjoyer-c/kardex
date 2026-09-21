@@ -1,18 +1,17 @@
 """
 Reads and writes the plain-text inventory list (Inventory.txt).
  
-One line per shelf, in order - line 1 corresponds to shelf number
-config.SHELF_LOWER_LIMIT, line 2 to the next shelf number, and so on.
+One line per tray, in order - line 1 corresponds to tray number
+config.TRAY_LOWER_LIMIT, line 2 to the next tray number, and so on.
 """
  
 from __future__ import annotations
-from typing import Optional
- 
+
 import config
 
 
 def read_all() -> list[str]:
-    """Reads all inventory lines, in shelf order
+    """Reads all inventory lines, in tray order
     """
     try:
         with open(config.INVENTORY_FILE, "r", encoding="utf-8") as f:
@@ -23,7 +22,7 @@ def read_all() -> list[str]:
  
  
 def search(query: str) -> list[tuple[int, str]]:
-    """Returns (shelf_number, description) pairs whose description
+    """Returns (tray_number, description) pairs whose description
     contains the query (case-insensitive substring match).
     Returns an empty list for a blank query, rather than matching
     everything
@@ -33,29 +32,29 @@ def search(query: str) -> list[tuple[int, str]]:
         return []
  
     results = []
-    for shelf_number, description in enumerate(read_all(), start=config.SHELF_LOWER_LIMIT):
+    for tray_number, description in enumerate(read_all(), start=config.TRAY_LOWER_LIMIT):
         if query in description.lower():
-            results.append((shelf_number, description))
+            results.append((tray_number, description))
     return results
  
  
 def write_all(lines: list[str]) -> None:
     """Overwrites the whole inventory file with the given lines, in
-    shelf order. Used e.g. when a description gets edited via the GUI."""
+    tray order. Used e.g. when a description gets edited via the GUI."""
     with open(config.INVENTORY_FILE, "w", encoding="utf-8") as f:
         for line in lines:
             f.write(line + "\n")
  
 
-def update_description(shelf_number: int, new_description: str) -> None:
-    """Updates a single shelf's description and writes the whole file
+def update_description(tray_number: int, new_description: str) -> None:
+    """Updates a single tray's description and writes the whole file
     back.
     """
     lines = read_all()
-    index = shelf_number - config.SHELF_LOWER_LIMIT
+    index = tray_number - config.TRAY_LOWER_LIMIT
  
     if not (0 <= index < len(lines)):
-        raise ValueError(f"Shelf number {shelf_number} is out of valid range.")
+        raise ValueError(f"Tray number {tray_number} is out of valid range.")
  
     lines[index] = new_description
     write_all(lines)

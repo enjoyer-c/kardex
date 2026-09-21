@@ -73,7 +73,7 @@ USB_CAMERA_WARMUP_FRAMES = 15
 STITCHER_MODE = cv2.Stitcher_SCANS      #vaible modes: SCANS or PANORAMA
 STICHER_CONFIDENCE_THRESHOLD = 0.5      #Default = 1.0
 
-MAX_IMAGES_PER_TABLAR = 3
+MAX_IMAGES_PER_TRAY = 3
 
 # --- QR-Code-Cam -----------------------------------------------------------
 QR_CAPTURE_SIZE = (1332, 990)   
@@ -93,8 +93,8 @@ else:
 
 TIMESTAMP_FORMAT = "%Y%m%d_%H%M%S"
 
-SHELF_LOWER_LIMIT = 1
-SHELF_UPPER_LIMIT = 50
+TRAY_LOWER_LIMIT = 1
+TRAY_UPPER_LIMIT = 50
 
 # --- Inventory ------------------------------------------------------------
 INVENTORY_FILE = BASE_DIR / "inventory.txt"

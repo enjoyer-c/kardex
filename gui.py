@@ -134,8 +134,6 @@ class App:
 
 
         self.status_text = tk.StringVar(value="IDLE - waiting for door to open")
-        # tk.Label statt ttk.Label, weil ttk dynamische bg/fg-Farben nicht
-        # sauber unterstuetzt (Styles waeren noetig)
         self.status_label = tk.Label(
             top_frame,
             textvariable=self.status_text,

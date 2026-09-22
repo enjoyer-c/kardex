@@ -41,21 +41,15 @@ class State(Enum):
     RETURNING = auto()               # Tray driving back into the warehouse, door closing
 
 class flow_controll:
+    """Owns the Kardex state machine and reacts to hardware events and GUI actions by
+    driving transitions between states, triggering QR scans and camera captures as needed."""
+        
     def __init__(self, app: gui.App):
         self.app = app
         self.state = State.IDLE
         self.current_tray_number: str | None = None
-        # Tracks a manual capture separately from self.state, since
-        # manual capture never changes self.state (stays IDLE) - needed
-        # so a second manual-capture click while one is still running
-        # in the background gets a clean, friendly rejection instead of
-        # relying only on camera_stitching's lower-level lock.
         self._manual_capture_in_progress = False
 
-        # on_change fires on gpiozero's own background thread (or the
-        # mock's threading.Thread) - root.after(0, ...) marshals it back
-        # onto the Tk main thread before any GUI code runs, since Tkinter
-        # widgets are not thread-safe to touch from elsewhere.
         self.sensor = hall_sensor.HallSensor(
             on_change=lambda is_open: self.app.root.after(0, self._on_door_change, is_open)
         )

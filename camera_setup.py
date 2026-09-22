@@ -23,8 +23,7 @@ def discover_cameras(max_cameras: int = 4) -> list[str]:
     physical USB port instead, so it stays unique even for identical
     camera models.
 
-    Some cameras (the C920 among them, due to its built-in hardware
-    H.264 encoder) expose MORE THAN ONE /dev/videoN node per physical
+    Some cameras expose MORE THAN ONE /dev/videoN node per physical
     unit - a secondary interface alongside the actual streaming one.
     by-path lists both under very similar names. To avoid showing
     phantom duplicate cameras, this dedupes by the real device each

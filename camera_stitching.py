@@ -1,20 +1,7 @@
 """
 Handles the USB cameras and panorama stitching.
-
 Cameras are opened, warmed up, read, and released on every single
-capture (same as before) - NOT kept open persistently. What's new
-compared to the original version:
-
-  - Cameras are read in PARALLEL (one thread per camera) instead of
-    strictly one after another. NOTE: the original serial approach
-    was a deliberate choice to avoid overwhelming USB bandwidth when
-    two cameras stream at once (see the original capture_one
-    docstring/comment). Reading warmup frames from both cameras at
-    the same time could reintroduce that same bandwidth problem -
-    this needs to be verified on the actual Pi hardware. If capture
-    becomes unreliable (cameras failing to open, dropped/garbled
-    frames, timeouts), fall back to sequential reads but keep the
-    lock below.
+capture - NOT kept open persistently.
 """
 
 from dataclasses import dataclass
@@ -32,10 +19,6 @@ class StitchResult:
     panorama_path: Path | None = None
     error_message: str | None = None
 
-
-# acquire(blocking=False) in capture_and_stitch - a second capture
-# attempt while one is already running is rejected instead of queued
-# or silently colliding with the first one.
 _capture_lock = threading.Lock()
 
 
@@ -72,7 +55,6 @@ def enforce_max_images(output_dir: Path, max_images: int) -> None:
 def capture_one(device: str) -> tuple[bool, "cv2.typing.MatLike | None", str | None]:
     """Opens a single camera, captures one frame, and releases it again
     before returning (open -> warmup -> read -> release).
-
     Returns (success, frame, error_message).
     """
     cam = open_camera(device)
@@ -92,11 +74,9 @@ def capture_one(device: str) -> tuple[bool, "cv2.typing.MatLike | None", str | N
 
 
 def capture_and_stitch(camera_devices: list[str], tray_number: str) -> StitchResult:
-    """Captures one frame from each camera IN PARALLEL (each camera is
-    still individually opened, warmed up, read and released - see
-    capture_one), stitches them, and saves the result. Refuses to run
-    (instead of blocking or colliding) if a capture is already in
-    progress."""
+    """Captures one frame from each camera IN PARALLEL. Each camera is still 
+    individually opened. Stitches captures, and saves the result. Refuses to run
+    if a capture is already in progress."""
 
     if not _capture_lock.acquire(blocking=False):
         return StitchResult(success=False, error_message="Capture already in progress - request ignored")

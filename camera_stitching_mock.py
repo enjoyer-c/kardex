@@ -1,10 +1,8 @@
 """
 Mock camera_stitching for Windows testing.
-
-Tries to use real webcams. If a camera isn't available, a synthetic 
-placeholder frame is generated instead,
-so the rest of the pipeline (stitching, saving, tray folders) can
-still be exercised without any real camera hardware attached.
+Tries to use real webcams. If a camera isn't available, a synthetic placeholder 
+frame is generated instead, so the rest of the pipeline (stitching, saving, tray folders) 
+can still be exercised without any real camera hardware attached.
 """
 
 from dataclasses import dataclass

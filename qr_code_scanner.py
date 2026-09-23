@@ -36,8 +36,7 @@ def _init_camera() -> "Picamera2":
 
 def scan_frame(frame) -> Optional[QRResult]:
     """Looks for a QR code in a single frame (RGB array from picamera2).
-    Returns the first QR code found, or None if none is detected.
-    """
+    Returns the first QR code found, or None if none is detected."""
     # picamera2 delivers RGB, not BGR - COLOR_RGB2GRAY (not BGR2GRAY!)
     gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
     results = [r for r in decode(gray) if r.type == "QRCODE"]
@@ -50,8 +49,7 @@ def scan_frame(frame) -> Optional[QRResult]:
  
 def wait_for_qr(timeout_s: float = config.QR_SCAN_TIMEOUT_S) -> Optional[QRResult]:
     """Repeatedly captures frames and tries to decode a QR code, until
-    either one is found or the timeout is reached (QR_SCAN_TIMEOUT_S).
-    """
+    either one is found or the timeout is reached (QR_SCAN_TIMEOUT_S)."""
     if not HAS_PICAMERA:
         print("[qr_code_scanner] picamera2 not available - cannot scan.")
         return None

@@ -1,17 +1,10 @@
 """
 Live preview for the HQ ribbon camera (QR scanner) - for positioning
 the camera and checking QR placement/focus during physical setup.
-
 Shows the live feed with a green outline drawn around any QR code
 currently detected, plus its decoded content - so you can see in real
 time whether the QR is actually readable from the current position/
 angle/distance, not just guess from the raw image.
-
-Requires a display (local monitor, or VNC) since it uses cv2.imshow.
-Do not run this at the same time as main.py - both would try to use
-the ribbon camera at once.
-
-Press 'q' in the window to quit, or Ctrl+C in the terminal.
 """
 
 import cv2

@@ -1,6 +1,5 @@
 """
 Reads and writes the plain-text inventory list (Inventory.txt).
- 
 One line per tray, in order - line 1 corresponds to tray number
 config.TRAY_LOWER_LIMIT, line 2 to the next tray number, and so on.
 """
@@ -11,8 +10,7 @@ import config
 
 
 def read_all() -> list[str]:
-    """Reads all inventory lines, in tray order
-    """
+    """Reads all inventory lines, in tray order"""
     try:
         with open(config.INVENTORY_FILE, "r", encoding="utf-8") as f:
             return [line.rstrip("\n") for line in f]
@@ -25,8 +23,7 @@ def search(query: str) -> list[tuple[int, str]]:
     """Returns (tray_number, description) pairs whose description
     contains the query (case-insensitive substring match).
     Returns an empty list for a blank query, rather than matching
-    everything
-    """
+    everything."""
     query = query.strip().lower()
     if not query:
         return []
@@ -47,9 +44,7 @@ def write_all(lines: list[str]) -> None:
  
 
 def update_description(tray_number: int, new_description: str) -> None:
-    """Updates a single tray's description and writes the whole file
-    back.
-    """
+    """Updates a single tray's description and writes the whole file back."""
     lines = read_all()
     index = tray_number - config.TRAY_LOWER_LIMIT
  

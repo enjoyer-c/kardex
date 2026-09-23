@@ -3,7 +3,6 @@ Camera setup helper: lets the user identify connected USB cameras via
 a live snapshot and assign left/right order - needed because plain
 USB port order isn't stable if the cameras ever get unplugged/swapped,
 and by-id device names alone don't say which physical camera is which
-(and can even collide for identical camera models - see discover_cameras).
 """
 
 from pathlib import Path
@@ -22,16 +21,6 @@ def discover_cameras(max_cameras: int = 4) -> list[str]:
     which makes udev's by-id names collide - by-path is keyed to the
     physical USB port instead, so it stays unique even for identical
     camera models.
-
-    Some cameras expose MORE THAN ONE /dev/videoN node per physical
-    unit - a secondary interface alongside the actual streaming one.
-    by-path lists both under very similar names. To avoid showing
-    phantom duplicate cameras, this dedupes by the real device each
-    symlink resolves to, and only keeps devices that can actually be
-    opened AND deliver a frame with the exact same settings a real
-    capture uses (see camera_stitching.capture_one) - so whatever
-    shows up here is guaranteed to also work during an actual
-    automatic or manual capture.
     """
     by_path_dir = Path("/dev/v4l/by-path")
     if not by_path_dir.exists():
@@ -72,7 +61,7 @@ def short_name(device: str) -> str:
 def capture_snapshot(device: str):
     """Grabs a single frame from the given camera device for preview
     purposes, using the exact same open/warmup/read logic as a real
-    capture (camera_stitching.capture_one) - so the preview is always
+    capture, so the preview is always
     representative of what an actual capture would get."""
     success, frame, _error_message = camera_stitching.capture_one(device)
     return frame if success else None

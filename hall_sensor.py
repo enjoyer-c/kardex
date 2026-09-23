@@ -1,11 +1,7 @@
 """
-Hall sensor module for detecting whether the door
-of the kardex shuttle is open or closed.
-
-Calls the optional on_change callback with a bool (True = open) on every
-state change.
+Hall sensor module for detecting whether the door of the kardex shuttle is open or closed.
+Calls the optional on_change callback with a bool (True = open) on every state change.
 """
-
 
 from typing import Callable, Optional
 

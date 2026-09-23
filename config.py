@@ -1,6 +1,5 @@
 """
 Central configuration for the Kardex project.
-
 Platform-aware (Windows dev machine vs. Raspberry Pi), so the same
 file works unchanged on both without manual edits.
 """
@@ -35,11 +34,6 @@ def _load_camera_devices() -> list[str]:
     by-path being tied to the physical port - by-id was tried first
     but collides for identical camera models like two Logitech C920s,
     which often report the same or an empty serial number).
- 
-    This fallback listing is NOT deduplicated/verified the way
-    camera_setup.discover_cameras() is - it's only a bootstrap before
-    Camera Setup has ever been used. Run Camera Setup once after
-    setting up a new Pi to lock in a verified, working order.
     """
     if CAMERA_ORDER_FILE.exists():
         try:

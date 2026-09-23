@@ -41,7 +41,7 @@ class State(Enum):
     RETURNING = auto()               # Tray driving back into the warehouse, door closing
 
 class flow_controll:
-    """Owns the Kardex state machine and reacts to hardware events and GUI actions by
+    """Owns the state machine and reacts to hardware events and GUI actions by
     driving transitions between states, triggering QR scans and camera captures as needed."""
         
     def __init__(self, app: gui.App):
@@ -77,16 +77,11 @@ class flow_controll:
 
     def _handle_delivery_arrival(self) -> None:
         """Door closed at delivery position - starts the QR scan in a
-        background thread so the GUI (search, arrow-key browsing, etc.)
-        stays usable while it runs, instead of freezing for however
-        long the scan takes (usually near-instant, but up to
-        QR_SCAN_TIMEOUT_S in the worst case)."""
+        background thread so the GUI stays usable while it runs."""
         threading.Thread(target=self._qr_scan_worker, daemon=True).start()
 
     def _qr_scan_worker(self) -> None:
         qr_result = qr_code_scanner.wait_for_qr()
-        # Hand the result back to the Tk main thread - GUI/state must
-        # only ever be touched from there.
         self.app.root.after(0, self._on_qr_scan_done, qr_result)
 
     def _on_qr_scan_done(self, qr_result) -> None:
@@ -141,8 +136,7 @@ class flow_controll:
     def _handle_manual_capture_request(self, tray_number: str) -> None:
         """Triggered from the GUI's manual-capture button. Only allowed
         while IDLE and no other manual capture is already running, so
-        it can't collide with the automatic door-sensor flow or with
-        itself (which both also drive the cameras)."""
+        it can't collide with the automatic door-sensor flow or with itself."""
 
         if self.state != State.IDLE:
             self.app.log_event("Manual capture rejected - system is busy", level=logging.WARNING)

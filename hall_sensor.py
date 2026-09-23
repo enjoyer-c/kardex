@@ -36,14 +36,12 @@ class HallSensor:
  
         self._handle_change()  # evaluate initial state on startup
 
-
     def _handle_change(self) -> None:
         self._is_open = not self._button.is_pressed
  
         if self._on_change:
             self._on_change(self._is_open)
 
- 
     def is_open(self) -> bool:
         return self._is_open
 

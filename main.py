@@ -69,7 +69,6 @@ class flow_controll:
         self.app.set_status(texts[self.state], self.state.name)
         self.app.refresh()
 
-
     def _handle_outbound_start(self) -> None:
         """IDLE -> OUTBOUND. First door open."""
         self.state = State.OUTBOUND
@@ -92,7 +91,6 @@ class flow_controll:
 
         self.state = State.AT_DELIVERY_POSITION
         self._update_status()
-
 
     def _handle_return_trigger(self) -> None:
         """Door open (2nd time) - starts the capture+stitch in a
@@ -119,19 +117,20 @@ class flow_controll:
     def _on_capture_done(self, result) -> None:
         if result.success:
             self.app.log_event(f"Capture saved: {result.panorama_path.name}")
+            # Table's "Last Capture" column should reflect the new
+            # capture immediately, same as after a manual capture
+            self.app._populate_tray_table(self.app.search_var.get())
         else:
             self.app.log_event(f"Error: {result.error_message}", level=logging.ERROR)
 
         self.state = State.RETURNING
         self._update_status()
 
-
     def _handle_returned(self) -> None:
         """RETURNING -> IDLE. Door final closing, tray is in warehouse."""
         self.current_tray_number = None
         self.state = State.IDLE
         self._update_status()
-
 
     def _handle_manual_capture_request(self, tray_number: str) -> None:
         """Triggered from the GUI's manual-capture button. Only allowed
@@ -167,7 +166,6 @@ class flow_controll:
 
         self._manual_capture_in_progress = False
         self.app._populate_tray_table(self.app.search_var.get())
-
 
     def _on_door_change(self, is_open: bool) -> None:
         if is_open and self.state == State.IDLE:

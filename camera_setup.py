@@ -10,7 +10,6 @@ import json
 
 import config
 import camera_stitching
-
 # Re-exported, so the GUI can catch it without importing camera_stitching
 CamerasBusyError = camera_stitching.CamerasBusyError
 
@@ -47,11 +46,11 @@ def discover_cameras(max_cameras: int = 4) -> dict[str, "cv2.typing.MatLike"]:
         for candidate in candidates:
             target = str(candidate.resolve())
             if target in seen_targets:
-                continue  # just another name for a device we already have
+                continue 
 
             success, frame, _error = camera_stitching.capture_one(str(candidate))
             if not success:
-                continue  # opens but can't actually deliver a frame (e.g. secondary interface)
+                continue 
 
             seen_targets.add(target)
             found[str(candidate)] = frame

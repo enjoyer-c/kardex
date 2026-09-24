@@ -295,6 +295,11 @@ class App:
         self._camera_setup_window.title("Camera Setup")
         self._camera_setup_window.resizable(False, False)
 
+        ttk.Button(
+            self._camera_setup_window, text="Refresh All", command=self._refresh_all_camera_setup_slots
+        ).pack(pady=(0, 10))
+
+
         ttk.Label(
             self._camera_setup_window,
             text="Identify each camera by its picture, then use the arrows to set left-to-right order.",
@@ -321,8 +326,7 @@ class App:
         self._camera_setup_window.protocol("WM_DELETE_WINDOW", _on_close)
 
         self._render_camera_setup_slots()
-        for device in self._camera_setup_order:
-            self._refresh_camera_setup_slot(device)
+        self._refresh_all_camera_setup_slots()
 
     def _close_camera_setup_window(self) -> None:
         if self._camera_setup_window is not None and self._camera_setup_window.winfo_exists():
@@ -330,6 +334,10 @@ class App:
         self._camera_setup_window = None
         self._camera_setup_slots_frame = None
         self.tray_table.focus_set()
+
+    def _refresh_all_camera_setup_slots(self) -> None:
+        for device in self._camera_setup_order:
+            self._refresh_camera_setup_slot(device)
 
     def _render_camera_setup_slots(self) -> None:
         """Rebuilds the row of camera slots from self._camera_setup_order -
@@ -351,10 +359,6 @@ class App:
                 image_label.configure(image=photo)
             else:
                 image_label.configure(text="(no preview yet)")
-
-            ttk.Button(
-                slot, text="Refresh", command=lambda d=device: self._refresh_camera_setup_slot(d)
-            ).pack(pady=(5, 5))
 
             nav_frame = ttk.Frame(slot)
             nav_frame.pack()

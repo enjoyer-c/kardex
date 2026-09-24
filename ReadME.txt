@@ -101,8 +101,6 @@ Tkinter interface.
 - Manual Capture: fallback tray-number entry for when the automatic door-sensor flow doesn't trigger
 - Camera Setup: shows a snapshot of each detected USB camera, allows reordering via arrow buttons, plus a button for the ribbon-cam live stream
 - Refresh All re-discovers from scratch
-- Camera Setup only allowed while the system is IDLE
-
 
 ---
 

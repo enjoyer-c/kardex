@@ -6,6 +6,8 @@ config.TRAY_LOWER_LIMIT, line 2 to the next tray number, and so on.
  
 from __future__ import annotations
 
+import os
+
 import config
 
 
@@ -37,10 +39,34 @@ def search(query: str) -> list[tuple[int, str]]:
  
 def write_all(lines: list[str]) -> None:
     """Overwrites the whole inventory file with the given lines, in
-    tray order. Used e.g. when a description gets edited via the GUI."""
-    with open(config.INVENTORY_FILE, "w", encoding="utf-8") as f:
-        for line in lines:
-            f.write(line + "\n")
+    tray order. Used e.g. when a description gets edited via the GUI.
+
+    Crash-safe: writes into a temporary file first and only then swaps
+    it in place of the real file with os.replace(). os.replace is atomic
+    - at any moment, inventory.txt is either the complete old or the
+    complete new version, never half-written (e.g. on power loss).
+    The temp file sits in the SAME folder on purpose: os.replace is only
+    atomic within one filesystem.
+    """
+    target = config.INVENTORY_FILE
+    temp = target.with_name(target.name + ".tmp")
+
+    try:
+        with open(temp, "w", encoding="utf-8") as f:
+            for line in lines:
+                f.write(line + "\n")
+            # push the data from Python/OS buffers onto the SD card BEFORE
+            # the swap - otherwise the swap could survive a power loss
+            # while the new content itself didn't
+            f.flush()
+            os.fsync(f.fileno())
+
+        os.replace(temp, target)
+    except BaseException:
+        # something went wrong - the original file is untouched, just
+        # clean up the leftover temp file and pass the error on
+        temp.unlink(missing_ok=True)
+        raise
  
 
 def update_description(tray_number: int, new_description: str) -> None:

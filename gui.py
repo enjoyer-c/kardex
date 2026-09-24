@@ -88,9 +88,6 @@ class App:
 
         # set from main.py - called when the user triggers a manual capture
         self.on_manual_capture: Optional[Callable[[str], None]] = None
-        # set from main.py - returns True if the cameras may be used for
-        # setup purposes right now (system IDLE, no capture running)
-        self.is_system_idle: Optional[Callable[[], bool]] = None
 
         self._button_icons: dict[str, ImageTk.PhotoImage] = {}
         self._load_button_icons()
@@ -119,6 +116,10 @@ class App:
         ).pack(anchor="w")
         tk.Label(
             hint_frame, text="• Right-click: rename description",
+            font=("Arial", 10), fg="black", bg="white",
+        ).pack(anchor="w")
+        tk.Label(
+            hint_frame, text="• Camera Setup takes a few seconds to load",
             font=("Arial", 10), fg="black", bg="white",
         ).pack(anchor="w")
 
@@ -289,26 +290,15 @@ class App:
 
     # --- Camera Setup (popup window) ---------------------------------------
 
-    def _cameras_available(self) -> bool:
-        """True if the cameras may be used outside the normal flow right
-        now (Camera Setup, ribbon cam preview). Asks main.py - only
-        while IDLE and no manual capture is running. Without a callback
-        (e.g. gui.py started on its own for testing) always True."""
-        if self.is_system_idle is None:
-            return True
-        return self.is_system_idle()
-
     def _open_camera_setup_window(self) -> None:
         if self._camera_setup_window is not None and self._camera_setup_window.winfo_exists():
             self._camera_setup_window.lift()
             self._camera_setup_window.focus_force()
             return
 
-        if not self._cameras_available():
-            messagebox.showinfo(
-                "Camera Setup", "Camera Setup is only available while the system is IDLE.", parent=self.root
-            )
-            return
+        # Always allowed, in every state - a setup is usually done WITH the
+        # tray out, to check that the whole tray is in the picture. Collisions
+        # with a running capture are prevented by the camera lock instead.
 
         # Start from the saved order - discovery results get merged into it
         # (cameras still connected keep their position, new ones are appended)
@@ -387,15 +377,10 @@ class App:
         a background thread, since every camera needs its warmup frames
         (several seconds in total) and the GUI + door-sensor flow must
         keep running meanwhile. Used on window open AND by Refresh All,
-        so Refresh All also picks up newly plugged-in cameras."""
+        so Refresh All also picks up newly plugged-in cameras.
+        If a capture is running right now, the camera lock makes the
+        search fail with a "busy" message instead of colliding with it."""
         if self._camera_discovery_running:
-            return
-
-        if not self._cameras_available():
-            messagebox.showinfo(
-                "Camera Setup", "Cameras are in use - please wait until the system is IDLE.",
-                parent=self._camera_setup_window,
-            )
             return
 
         self._camera_discovery_running = True
@@ -518,14 +503,6 @@ class App:
         if self._ribbon_cam_process is not None and self._ribbon_cam_process.poll() is None:
             messagebox.showinfo(
                 "Camera Setup", "The ribbon cam preview is already open.", parent=self._camera_setup_window
-            )
-            return
-
-        # The QR scan uses the same camera - don't start while a tray is on its way
-        if not self._cameras_available():
-            messagebox.showinfo(
-                "Camera Setup", "Cameras are in use - please wait until the system is IDLE.",
-                parent=self._camera_setup_window,
             )
             return
 

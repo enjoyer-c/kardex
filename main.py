@@ -55,15 +55,8 @@ class flow_controll:
             on_change=lambda is_open: self.app.root.after(0, self._on_door_change, is_open)
         )
         self.app.on_manual_capture = self._handle_manual_capture_request
-        self.app.is_system_idle = self._is_system_idle
 
         self._update_status()
-
-    def _is_system_idle(self) -> bool:
-        """Asked by the GUI before using cameras outside the normal flow
-        (Camera Setup, ribbon cam live preview): only allowed while
-        nothing else is using them."""
-        return self.state == State.IDLE and not self._manual_capture_in_progress
 
     def _update_status(self) -> None:
         texts = {
@@ -167,6 +160,8 @@ class flow_controll:
     def _on_capture_done(self, result) -> None:
         if result.success:
             self.app.log_event(f"Capture saved: {result.panorama_path.name}")
+            # Table's "Last Capture" column should reflect the new
+            # capture immediately, same as after a manual capture
             self.app._populate_tray_table(self.app.search_var.get())
         else:
             self.app.log_event(f"Error: {result.error_message}", level=logging.ERROR)
@@ -174,6 +169,9 @@ class flow_controll:
         self.state = State.RETURNING
         self._update_status()
 
+        # Same catch-up as after the QR scan: if the door already
+        # closed while capturing/stitching, that event was ignored -
+        # the tray is already back, so go straight to IDLE.
         if not self.sensor.is_open():
             self.app.log_event("Door closed during capture - returning to IDLE")
             self._handle_returned()

@@ -53,3 +53,28 @@ def update_description(tray_number: int, new_description: str) -> None:
  
     lines[index] = new_description
     write_all(lines)
+
+
+def normalize_tray_number(raw: str) -> str | None:
+    """Checks a tray number coming from outside (QR code, manual input)
+    and returns it in normalized form, or None if it's invalid.
+
+    Accepted: plain digits only (surrounding whitespace is ignored),
+    within TRAY_LOWER_LIMIT..TRAY_UPPER_LIMIT.
+    Normalized: leading zeros are removed ("01" -> "1"), so the same
+    tray always ends up in the same folder (OUTPUT_DIR/1, never /01).
+    Rejected: letters, signs ("+5", "-3"), decimals ("1.0"), empty
+    input, and anything out of range.
+    """
+    text = raw.strip()
+
+    # isascii() on top of isdigit(): isdigit() alone would also accept
+    # other Unicode digits like superscripts, which int() can't parse
+    if not (text.isascii() and text.isdigit()):
+        return None
+
+    number = int(text)
+    if not (config.TRAY_LOWER_LIMIT <= number <= config.TRAY_UPPER_LIMIT):
+        return None
+
+    return str(number)

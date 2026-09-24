@@ -42,6 +42,9 @@ Drives the state-machine flow and connects hardware events to the GUI.
 - If no tray QR code is detected, nothing is photographed - jumps straight to RETURNING
 - Logging: RotatingFileHandler (max. 5 MB, up to 3 backups) plus console output; a global Tkinter exception handler ensures even unhandled GUI errors always end up in the log file
 - Linux: the window is maximized on startup (-zoomed, with a fallback to manually setting the screen resolution)
+- Worker threads always report back to the main thread, even if they crash (wrapped in try/except, logged via logging.exception)
+- After a background operation finishes, the door sensor's current state is checked to catch up on a door event that arrived while the thread was busy
+
 
 ### camera_stitching.py
 Drives the USB cameras and stitches the panorama.
@@ -51,6 +54,8 @@ Drives the USB cameras and stitches the panorama.
 - A lock (_capture_lock) prevents overlapping captures - a second attempt while one is already running is rejected immediately with an error, instead of waiting or colliding
 - Stitching via OpenCV's Stitcher; if a camera or the stitching itself fails, the whole attempt aborts with an error message
 - The result is saved with a timestamp under OUTPUT_DIR/<tray_number>/; at most MAX_IMAGES_PER_TRAY images per tray are kept, the oldest ones are deleted automatically
+- exclusive_cameras(): reserves all USB cameras using the SAME _capture_lock as capture_and_stitch used by Camera Setup's search, so a running search and a running capture can never touch the cameras at the same time.
+
 
 ### camera_setup.py
 Helper module for the Camera Setup window (camera identification and ordering).
@@ -58,6 +63,8 @@ Helper module for the Camera Setup window (camera identification and ordering).
 - Camera discovery via /dev/v4l/by-path (not by-id, since identical camera models often report the same or an empty serial number, which would cause collisions)
 - Some cameras (including the Logitech C920 used here) expose more than one video interface per physical unit - filtered out via deduplication plus an actual functional test (using camera_stitching.capture_one), so only genuinely usable cameras are shown
 - The saved order is stored as camera_order.json in the project folder
+- discover_cameras() now returns {device: image} directly
+
 
 ### qr_code_scanner.py
 Ribbon camera (Pi HQ Camera) for QR code detection.
@@ -80,6 +87,8 @@ Reads/writes the plain-text inventory list (inventory.txt, one description per l
 
 - Converts between 0-based line numbering and 1-based tray numbering (enumerate(..., start=TRAY_LOWER_LIMIT) and index = tray_number - TRAY_LOWER_LIMIT respectively)
 - Missing file -> empty list instead of a crash; invalid tray number in update_description -> ValueError
+- validates/normalizes tray number ("01" → "1"), rejects anything that isn't a plain integer within TRAY_LOWER_LIMIT/TRAY_UPPER_LIMIT. Prevents duplicate folders for the same tray (e.g. "1" vs "01")
+
 
 ### gui.py
 Tkinter interface.
@@ -91,6 +100,9 @@ Tkinter interface.
 - Arrow keys control the tray table even when, e.g., the search box currently has focus
 - Manual Capture: fallback tray-number entry for when the automatic door-sensor flow doesn't trigger
 - Camera Setup: shows a snapshot of each detected USB camera, allows reordering via arrow buttons, plus a button for the ribbon-cam live stream
+- Refresh All re-discovers from scratch
+- Camera Setup only allowed while the system is IDLE
+
 
 ---
 

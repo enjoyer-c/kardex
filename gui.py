@@ -40,6 +40,7 @@ from PIL import Image, ImageTk
 import cv2
 import subprocess
 import sys
+import threading
 
 import config
 import inventory
@@ -79,9 +80,17 @@ class App:
         self._camera_setup_order: list[str] = []
         self._camera_setup_photos: dict[str, ImageTk.PhotoImage] = {}
         self._camera_setup_slots_frame: Optional[ttk.Frame] = None
+        self._camera_setup_status_var: Optional[tk.StringVar] = None
+        self._camera_setup_refresh_button: Optional[ttk.Button] = None
+        self._camera_setup_save_button: Optional[ttk.Button] = None
+        self._camera_discovery_running = False
+        self._ribbon_cam_process: Optional[subprocess.Popen] = None
 
         # set from main.py - called when the user triggers a manual capture
         self.on_manual_capture: Optional[Callable[[str], None]] = None
+        # set from main.py - returns True if the cameras may be used for
+        # setup purposes right now (system IDLE, no capture running)
+        self.is_system_idle: Optional[Callable[[], bool]] = None
 
         self._button_icons: dict[str, ImageTk.PhotoImage] = {}
         self._load_button_icons()
@@ -110,10 +119,6 @@ class App:
         ).pack(anchor="w")
         tk.Label(
             hint_frame, text="• Right-click: rename description",
-            font=("Arial", 10), fg="black", bg="white",
-        ).pack(anchor="w")
-        tk.Label(
-            hint_frame, text="• Camera Setup takes a few seconds to load",
             font=("Arial", 10), fg="black", bg="white",
         ).pack(anchor="w")
 
@@ -257,6 +262,19 @@ class App:
             messagebox.showwarning("Input missing", "Please enter the tray number.", parent=self._manual_capture_window)
             return
 
+        # Only plain numbers within the tray limits - "01" becomes "1",
+        # letters/decimals/out-of-range get rejected. The popup stays
+        # open so the user can correct the input.
+        normalized = inventory.normalize_tray_number(tray_number)
+        if normalized is None:
+            messagebox.showwarning(
+                "Invalid tray number",
+                f"Please enter a number from {config.TRAY_LOWER_LIMIT} to {config.TRAY_UPPER_LIMIT}.",
+                parent=self._manual_capture_window,
+            )
+            return
+        tray_number = normalized
+
         try:
             if self.on_manual_capture:
                 self.on_manual_capture(tray_number)
@@ -271,47 +289,62 @@ class App:
 
     # --- Camera Setup (popup window) ---------------------------------------
 
+    def _cameras_available(self) -> bool:
+        """True if the cameras may be used outside the normal flow right
+        now (Camera Setup, ribbon cam preview). Asks main.py - only
+        while IDLE and no manual capture is running. Without a callback
+        (e.g. gui.py started on its own for testing) always True."""
+        if self.is_system_idle is None:
+            return True
+        return self.is_system_idle()
+
     def _open_camera_setup_window(self) -> None:
         if self._camera_setup_window is not None and self._camera_setup_window.winfo_exists():
             self._camera_setup_window.lift()
             self._camera_setup_window.focus_force()
             return
 
-        devices = camera_setup.discover_cameras()
-        if not devices:
-            messagebox.showinfo("Camera Setup", "No cameras found.", parent=self.root)
+        if not self._cameras_available():
+            messagebox.showinfo(
+                "Camera Setup", "Camera Setup is only available while the system is IDLE.", parent=self.root
+            )
             return
 
-        # Start from the currently saved order if it still matches what's connected, otherwise just use discovery order as a starting point
-        saved_order = camera_setup.load_camera_order()
-        if saved_order and set(saved_order) == set(devices):
-            self._camera_setup_order = list(saved_order)
-        else:
-            self._camera_setup_order = list(devices)
-
+        # Start from the saved order - discovery results get merged into it
+        # (cameras still connected keep their position, new ones are appended)
+        self._camera_setup_order = camera_setup.load_camera_order()
         self._camera_setup_photos = {}
 
+        # The window opens IMMEDIATELY - the camera search runs in the
+        # background and fills in the slots once it's done
         self._camera_setup_window = tk.Toplevel(self.root)
         self._camera_setup_window.title("Camera Setup")
         self._camera_setup_window.resizable(False, False)
-
-        ttk.Button(
-            self._camera_setup_window, text="Refresh All", command=self._refresh_all_camera_setup_slots
-        ).pack(pady=(0, 10))
-
 
         ttk.Label(
             self._camera_setup_window,
             text="Identify each camera by its picture, then use the arrows to set left-to-right order.",
             font=("Arial", 11),
-        ).pack(padx=15, pady=(15, 10))
+        ).pack(padx=15, pady=(15, 5))
+
+        self._camera_setup_status_var = tk.StringVar(value="")
+        ttk.Label(
+            self._camera_setup_window, textvariable=self._camera_setup_status_var, font=("Arial", 10, "italic")
+        ).pack(pady=(0, 10))
 
         self._camera_setup_slots_frame = ttk.Frame(self._camera_setup_window)
         self._camera_setup_slots_frame.pack(padx=15, pady=(0, 10))
 
         button_frame = ttk.Frame(self._camera_setup_window)
         button_frame.pack(pady=(0, 15))
-        ttk.Button(button_frame, text="Save Order", command=self._save_camera_setup_order).pack(side="left", padx=5)
+        self._camera_setup_refresh_button = ttk.Button(
+            button_frame, text="Refresh All", command=self._start_camera_discovery
+        )
+        self._camera_setup_refresh_button.pack(side="left", padx=5)
+        self._camera_setup_save_button = ttk.Button(
+            button_frame, text="Save Order", command=self._save_camera_setup_order
+        )
+        self._camera_setup_save_button.pack(side="left", padx=5)
         ttk.Button(button_frame, text="Cancel", command=self._close_camera_setup_window).pack(side="left", padx=5)
 
         # Ribbon cam (QR scanner) needs a real live view for fine focus/position adjustment. Opens as a separate process.
@@ -320,24 +353,108 @@ class App:
             command=self._launch_ribbon_cam_preview,
         ).pack(pady=(0, 15))
 
-        def _on_close() -> None:
-            self._close_camera_setup_window()
+        self._camera_setup_window.protocol("WM_DELETE_WINDOW", self._close_camera_setup_window)
 
-        self._camera_setup_window.protocol("WM_DELETE_WINDOW", _on_close)
-
-        self._render_camera_setup_slots()
-        self._refresh_all_camera_setup_slots()
+        if self._camera_discovery_running:
+            # A search started from a previously closed window is still
+            # running - its result will simply show up in this window
+            self._camera_setup_status_var.set("Searching for cameras - this takes a few seconds ...")
+            self._update_camera_setup_buttons()
+        else:
+            self._start_camera_discovery()
 
     def _close_camera_setup_window(self) -> None:
         if self._camera_setup_window is not None and self._camera_setup_window.winfo_exists():
             self._camera_setup_window.destroy()
         self._camera_setup_window = None
         self._camera_setup_slots_frame = None
+        self._camera_setup_status_var = None
+        self._camera_setup_refresh_button = None
+        self._camera_setup_save_button = None
         self.tray_table.focus_set()
 
-    def _refresh_all_camera_setup_slots(self) -> None:
-        for device in self._camera_setup_order:
-            self._refresh_camera_setup_slot(device)
+    def _update_camera_setup_buttons(self) -> None:
+        """Refresh/Save are disabled while a search is running; Save also
+        while there's nothing to save (no cameras found)."""
+        if self._camera_setup_refresh_button is not None:
+            self._camera_setup_refresh_button.state(["disabled" if self._camera_discovery_running else "!disabled"])
+        if self._camera_setup_save_button is not None:
+            can_save = not self._camera_discovery_running and bool(self._camera_setup_order)
+            self._camera_setup_save_button.state(["!disabled" if can_save else "disabled"])
+
+    def _start_camera_discovery(self) -> None:
+        """Searches for cameras and grabs one preview frame from each - in
+        a background thread, since every camera needs its warmup frames
+        (several seconds in total) and the GUI + door-sensor flow must
+        keep running meanwhile. Used on window open AND by Refresh All,
+        so Refresh All also picks up newly plugged-in cameras."""
+        if self._camera_discovery_running:
+            return
+
+        if not self._cameras_available():
+            messagebox.showinfo(
+                "Camera Setup", "Cameras are in use - please wait until the system is IDLE.",
+                parent=self._camera_setup_window,
+            )
+            return
+
+        self._camera_discovery_running = True
+        self._camera_setup_status_var.set("Searching for cameras - this takes a few seconds ...")
+        self._update_camera_setup_buttons()
+
+        threading.Thread(target=self._camera_discovery_worker, daemon=True).start()
+
+    def _camera_discovery_worker(self) -> None:
+        """Runs in a background thread. ALWAYS reports back to the Tk
+        main thread - otherwise _camera_discovery_running would stay True
+        and the Refresh button disabled forever."""
+        found: dict = {}
+        error_message = None
+        try:
+            found = camera_setup.discover_cameras()
+        except camera_setup.CamerasBusyError as exc:
+            error_message = str(exc)
+        except Exception as exc:
+            logging.exception("Camera discovery crashed")
+            error_message = f"Camera search failed: {exc}"
+
+        self.root.after(0, self._on_camera_discovery_done, found, error_message)
+
+    def _on_camera_discovery_done(self, found: dict, error_message: Optional[str]) -> None:
+        self._camera_discovery_running = False
+
+        # Window may have been closed while searching - just drop the result
+        if self._camera_setup_window is None or not self._camera_setup_window.winfo_exists():
+            return
+
+        if error_message is not None:
+            self._camera_setup_status_var.set(error_message)
+            self._update_camera_setup_buttons()
+            return
+
+        kept = [device for device in self._camera_setup_order if device in found]
+        new = [device for device in found if device not in kept]
+        self._camera_setup_order = kept + new
+
+        # The frames from the discovery's functional test ARE the previews -
+        # no second capture round needed
+        self._camera_setup_photos = {device: self._frame_to_photo(frame) for device, frame in found.items()}
+        self._render_camera_setup_slots()
+
+        if found:
+            self._camera_setup_status_var.set(f"{len(found)} camera(s) found.")
+        else:
+            self._camera_setup_status_var.set("No cameras found.")
+        self._update_camera_setup_buttons()
+
+    @staticmethod
+    def _frame_to_photo(frame) -> ImageTk.PhotoImage:
+        """cv2 frame (BGR) -> thumbnail for the setup slots. Must run in
+        the Tk main thread (PhotoImage isn't thread-safe)."""
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        pil_image = Image.fromarray(rgb)
+        pil_image.thumbnail((280, 210))
+        return ImageTk.PhotoImage(pil_image)
 
     def _render_camera_setup_slots(self) -> None:
         """Rebuilds the row of camera slots from self._camera_setup_order -
@@ -378,21 +495,6 @@ class App:
             if index == len(self._camera_setup_order) - 1:
                 right_button.state(["disabled"])
 
-    def _refresh_camera_setup_slot(self, device: str) -> None:
-        frame = camera_setup.capture_snapshot(device)
-        if frame is None:
-            messagebox.showwarning(
-                "Camera Setup", f"Could not read from:\n{camera_setup.short_name(device)}",
-                parent=self._camera_setup_window,
-            )
-            return
-
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        pil_image = Image.fromarray(rgb)
-        pil_image.thumbnail((280, 210))
-        self._camera_setup_photos[device] = ImageTk.PhotoImage(pil_image)
-        self._render_camera_setup_slots()
-
     def _move_camera_setup_slot(self, index: int, direction: int) -> None:
         new_index = index + direction
         if not (0 <= new_index < len(self._camera_setup_order)):
@@ -412,6 +514,21 @@ class App:
         cv2.imshow window outside of Tkinter, for fine-tuning the
         ribbon camera's focus/position while watching QR detection in
         real time."""
+        # Only one preview at a time - poll() is None means "still running"
+        if self._ribbon_cam_process is not None and self._ribbon_cam_process.poll() is None:
+            messagebox.showinfo(
+                "Camera Setup", "The ribbon cam preview is already open.", parent=self._camera_setup_window
+            )
+            return
+
+        # The QR scan uses the same camera - don't start while a tray is on its way
+        if not self._cameras_available():
+            messagebox.showinfo(
+                "Camera Setup", "Cameras are in use - please wait until the system is IDLE.",
+                parent=self._camera_setup_window,
+            )
+            return
+
         script_path = Path(__file__).resolve().parent / "Setup_RibbonCAM.py"
         if not script_path.exists():
             messagebox.showwarning(
@@ -425,7 +542,7 @@ class App:
             "Don't run this while a tray is currently being captured.",
             parent=self._camera_setup_window,
         )
-        subprocess.Popen([sys.executable, str(script_path)])
+        self._ribbon_cam_process = subprocess.Popen([sys.executable, str(script_path)])
 
     # --- History (separate pop-up window) --------------------------------
 

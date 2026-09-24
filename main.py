@@ -9,6 +9,7 @@ import traceback
 
 import config
 import gui
+import inventory
 
 if sys.platform.startswith("win32"):
     import hall_sensor_mock as hall_sensor
@@ -54,8 +55,15 @@ class flow_controll:
             on_change=lambda is_open: self.app.root.after(0, self._on_door_change, is_open)
         )
         self.app.on_manual_capture = self._handle_manual_capture_request
+        self.app.is_system_idle = self._is_system_idle
 
         self._update_status()
+
+    def _is_system_idle(self) -> bool:
+        """Asked by the GUI before using cameras outside the normal flow
+        (Camera Setup, ribbon cam live preview): only allowed while
+        nothing else is using them."""
+        return self.state == State.IDLE and not self._manual_capture_in_progress
 
     def _update_status(self) -> None:
         texts = {
@@ -80,17 +88,47 @@ class flow_controll:
         threading.Thread(target=self._qr_scan_worker, daemon=True).start()
 
     def _qr_scan_worker(self) -> None:
-        qr_result = qr_code_scanner.wait_for_qr()
-        self.app.root.after(0, self._on_qr_scan_done, qr_result)
+        """Runs in a background thread. ALWAYS reports back to the Tk
+        main thread - even if the scan crashes - otherwise the state
+        machine would stay stuck in OUTBOUND forever."""
+        qr_result = None
+        error_message = None
+        try:
+            qr_result = qr_code_scanner.wait_for_qr()
+        except Exception as exc:
+            # logging is thread-safe - writes the full traceback to the log file
+            logging.exception("QR scan worker crashed")
+            error_message = f"QR scan failed: {exc}"
 
-    def _on_qr_scan_done(self, qr_result) -> None:
-        if qr_result is None:
+        self.app.root.after(0, self._on_qr_scan_done, qr_result, error_message)
+
+    def _on_qr_scan_done(self, qr_result, error_message: str | None = None) -> None:
+        if error_message is not None:
+            self.app.log_event(f"Error: {error_message}", level=logging.ERROR)
+        elif qr_result is None:
             self.app.log_event("Error: No QR-Code found", level=logging.ERROR)
         else:
-            self.current_tray_number = qr_result.data
+            # QR content comes from outside - only accept valid tray
+            # numbers, normalized ("01" -> "1"). Invalid content is
+            # treated like "no QR found", so the capture gets skipped.
+            tray_number = inventory.normalize_tray_number(qr_result.data)
+            if tray_number is None:
+                self.app.log_event(
+                    f"Error: QR-Code contains no valid tray number: '{qr_result.data}'",
+                    level=logging.ERROR,
+                )
+            else:
+                self.current_tray_number = tray_number
 
         self.state = State.AT_DELIVERY_POSITION
         self._update_status()
+
+        # Door events that arrived WHILE the scan was running were
+        # ignored (state was still OUTBOUND). If the door is already
+        # open again by now, catch up on the missed "2nd door open".
+        if self.sensor.is_open():
+            self.app.log_event("Door opened during QR scan - continuing with capture")
+            self._handle_return_trigger()
 
     def _handle_return_trigger(self) -> None:
         """Door open (2nd time) - starts the capture+stitch in a
@@ -108,23 +146,37 @@ class flow_controll:
             target=self._capture_worker, args=(self.current_tray_number,), daemon=True
         ).start()
 
+    def _run_capture_safely(self, tray_number: str):
+        """Wraps capture_and_stitch so it ALWAYS returns a StitchResult,
+        even if something inside crashes (cv2.error, disk full, ...).
+        Used by both the automatic and the manual capture worker."""
+        try:
+            return camera_stitching.capture_and_stitch(
+                config.USB_CAMERA_DEVICES, tray_number=tray_number
+            )
+        except Exception as exc:
+            logging.exception("Capture worker crashed")
+            return camera_stitching.StitchResult(
+                success=False, error_message=f"Capture crashed: {exc}"
+            )
+
     def _capture_worker(self, tray_number: str) -> None:
-        result = camera_stitching.capture_and_stitch(
-            config.USB_CAMERA_DEVICES, tray_number=tray_number
-        )
+        result = self._run_capture_safely(tray_number)
         self.app.root.after(0, self._on_capture_done, result)
 
     def _on_capture_done(self, result) -> None:
         if result.success:
             self.app.log_event(f"Capture saved: {result.panorama_path.name}")
-            # Table's "Last Capture" column should reflect the new
-            # capture immediately, same as after a manual capture
             self.app._populate_tray_table(self.app.search_var.get())
         else:
             self.app.log_event(f"Error: {result.error_message}", level=logging.ERROR)
 
         self.state = State.RETURNING
         self._update_status()
+
+        if not self.sensor.is_open():
+            self.app.log_event("Door closed during capture - returning to IDLE")
+            self._handle_returned()
 
     def _handle_returned(self) -> None:
         """RETURNING -> IDLE. Door final closing, tray is in warehouse."""
@@ -153,9 +205,7 @@ class flow_controll:
         ).start()
 
     def _manual_capture_worker(self, tray_number: str) -> None:
-        result = camera_stitching.capture_and_stitch(
-            config.USB_CAMERA_DEVICES, tray_number=tray_number
-        )
+        result = self._run_capture_safely(tray_number)
         self.app.root.after(0, self._on_manual_capture_done, result)
 
     def _on_manual_capture_done(self, result) -> None:

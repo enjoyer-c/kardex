@@ -4,6 +4,7 @@ Cameras are opened, warmed up, read, and released on every single
 capture - NOT kept open persistently.
 """
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 import threading
@@ -20,6 +21,25 @@ class StitchResult:
     error_message: str | None = None
 
 _capture_lock = threading.Lock()
+
+
+class CamerasBusyError(RuntimeError):
+    """Raised by exclusive_cameras() if the cameras are already in use."""
+
+
+@contextmanager
+def exclusive_cameras():
+    """Reserves ALL USB cameras for the duration of the with-block, using
+    the same lock as capture_and_stitch - so e.g. the Camera Setup can
+    never open a camera while a real capture is running (or vice versa).
+    Non-blocking, same as capture_and_stitch: if the cameras are already
+    in use, CamerasBusyError is raised immediately instead of waiting."""
+    if not _capture_lock.acquire(blocking=False):
+        raise CamerasBusyError("Cameras are busy - a capture is currently running")
+    try:
+        yield
+    finally:
+        _capture_lock.release()
 
 
 def create_tray_folders() -> None:

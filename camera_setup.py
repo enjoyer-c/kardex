@@ -11,10 +11,19 @@ import json
 import config
 import camera_stitching
 
+# Re-exported, so the GUI can catch it without importing camera_stitching
+CamerasBusyError = camera_stitching.CamerasBusyError
 
-def discover_cameras(max_cameras: int = 4) -> list[str]:
-    """Returns unique, actually-usable by-path device paths of
-    connected USB cameras.
+
+def discover_cameras(max_cameras: int = 4) -> dict[str, "cv2.typing.MatLike"]:
+    """Returns {device path: preview frame} for all unique, actually-usable
+    connected USB cameras, in discovery order. The frame from the
+    functional test doubles as the preview image, so every camera only
+    has to be opened (and warmed up) ONCE.
+
+    Holds the camera lock for the whole search - raises CamerasBusyError
+    if a capture is currently running. Blocks for several seconds (warmup
+    frames per camera) - call it from a background thread, not from Tk.
 
     Uses by-path (not by-id): identical camera models (e.g. two
     Logitech C920s) often report the same or an empty serial number,
@@ -24,7 +33,7 @@ def discover_cameras(max_cameras: int = 4) -> list[str]:
     """
     by_path_dir = Path("/dev/v4l/by-path")
     if not by_path_dir.exists():
-        return []
+        return {}
 
     candidates = sorted(
         p for p in by_path_dir.iterdir()
@@ -32,23 +41,25 @@ def discover_cameras(max_cameras: int = 4) -> list[str]:
     )
 
     seen_targets: set[str] = set()
-    usable: list[str] = []
-    for candidate in candidates:
-        target = str(candidate.resolve())
-        if target in seen_targets:
-            continue  # just another name for a device we already have
+    found: dict[str, "cv2.typing.MatLike"] = {}
 
-        success, _frame, _error = camera_stitching.capture_one(str(candidate))
-        if not success:
-            continue  # opens but can't actually deliver a frame (e.g. secondary interface)
+    with camera_stitching.exclusive_cameras():
+        for candidate in candidates:
+            target = str(candidate.resolve())
+            if target in seen_targets:
+                continue  # just another name for a device we already have
 
-        seen_targets.add(target)
-        usable.append(str(candidate))
+            success, frame, _error = camera_stitching.capture_one(str(candidate))
+            if not success:
+                continue  # opens but can't actually deliver a frame (e.g. secondary interface)
 
-        if len(usable) >= max_cameras:
-            break
+            seen_targets.add(target)
+            found[str(candidate)] = frame
 
-    return usable
+            if len(found) >= max_cameras:
+                break
+
+    return found
 
 
 def short_name(device: str) -> str:
@@ -56,15 +67,6 @@ def short_name(device: str) -> str:
     distinguishing segment, for display purposes."""
     name = Path(device).name
     return name.replace("-video-index0", "")
-
-
-def capture_snapshot(device: str):
-    """Grabs a single frame from the given camera device for preview
-    purposes, using the exact same open/warmup/read logic as a real
-    capture, so the preview is always
-    representative of what an actual capture would get."""
-    success, frame, _error_message = camera_stitching.capture_one(device)
-    return frame if success else None
 
 
 def load_camera_order() -> list[str]:

@@ -92,11 +92,20 @@ class App:
         self._button_icons: dict[str, ImageTk.PhotoImage] = {}
         self._load_button_icons()
 
+        self._window_icon: Optional[tk.PhotoImage] = None
+        self._load_window_icon()
+
         self._build_top_section()
         self._build_main_section()
 
         self.root.bind_all("<Up>", self._handle_global_arrow_key)
         self.root.bind_all("<Down>", self._handle_global_arrow_key)
+
+    def _load_window_icon(self) -> None:
+        icon_path = Path(__file__).resolve().parent / "icons" / "app_icon.png"
+        if icon_path.exists():
+            self._window_icon = tk.PhotoImage(file=str(icon_path))
+            self.root.iconphoto(True, self._window_icon)
 
     def _build_top_section(self) -> None:
         top_frame = ttk.Frame(self.root)

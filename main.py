@@ -226,6 +226,20 @@ class flow_controll:
             self._handle_returned()
 
 
+def _set_windows_app_id() -> None:
+    """Windows groups taskbar icons by an "AppUserModelID". Without its
+    own ID, the program counts as python.exe and the taskbar shows the
+    Python icon - no matter what iconphoto() sets. Must be called BEFORE
+    the first Tk window is created. Does nothing on Linux."""
+    if not sys.platform.startswith("win32"):
+        return
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("GSI.Kardex.ShuttleSystem")
+    except (AttributeError, OSError) as exc:
+        logging.warning("Could not set Windows AppUserModelID: %s", exc)
+
+
 def _handle_callback_exception(exc, val, tb) -> None:
     logging.error("Unhandled GUI exception:\n%s", "".join(traceback.format_exception(exc, val, tb)))
 
@@ -233,7 +247,8 @@ def _handle_callback_exception(exc, val, tb) -> None:
 def main() -> None:
     camera_stitching.create_tray_folders()
 
-    root = tk.Tk()
+    _set_windows_app_id()
+    root = tk.Tk(className="Kardex")
     root.report_callback_exception = _handle_callback_exception
     if sys.platform.startswith("linux"):
         try:

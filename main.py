@@ -56,15 +56,12 @@ class flow_controll:
             on_change=lambda is_open: self.app.root.after(0, self._on_door_change, is_open)
         )
 
-        # If the hall sensor couldn't be set up, show it in the History -
-        # otherwise nobody notices that door detection isn't working.
-        # getattr: the Windows mock doesn't have this attribute
+        # If the hall sensor couldn't be set up -> Log
         sensor_error = getattr(self.sensor, "error_message", None)
         if sensor_error:
             self.app.log_event(sensor_error, level=logging.ERROR)
 
         # Saved USB camera order still matches the connected cameras?
-        # (e.g. a camera was unplugged or moved to another USB port)
         camera_warning = camera_setup.check_saved_order()
         if camera_warning:
             self.app.log_event(camera_warning, level=logging.WARNING)
@@ -82,7 +79,6 @@ class flow_controll:
         }
 
         self.app.set_status(texts[self.state], self.state.name)
-        self.app.refresh()
 
     def _handle_outbound_start(self) -> None:
         """IDLE -> OUTBOUND. First door open."""
@@ -159,7 +155,7 @@ class flow_controll:
         Used by both the automatic and the manual capture worker."""
         try:
             return camera_stitching.capture_and_stitch(
-                config.USB_CAMERA_DEVICES, tray_number=tray_number
+                camera_setup.get_camera_devices(), tray_number=tray_number
             )
         except Exception as exc:
             logging.exception("Capture worker crashed")
@@ -169,14 +165,14 @@ class flow_controll:
 
     def _capture_worker(self, tray_number: str) -> None:
         result = self._run_capture_safely(tray_number)
-        self.app.root.after(0, self._on_capture_done, result)
+        self.app.root.after(0, self._on_capture_done, result, tray_number)
 
-    def _on_capture_done(self, result) -> None:
+    def _on_capture_done(self, result, tray_number: str) -> None:
         if result.success:
             self.app.log_event(f"Capture saved: {result.panorama_path.name}")
-            # Table's "Last Capture" column should reflect the new
-            # capture immediately, same as after a manual capture
-            self.app._populate_tray_table(self.app.search_var.get())
+            # Only this tray's row (+ its preview, if selected) gets
+            # refreshed - not the whole table
+            self.app.update_tray_row(int(tray_number))
         else:
             self.app.log_event(f"Error: {result.error_message}", level=logging.ERROR)
 
@@ -218,16 +214,17 @@ class flow_controll:
 
     def _manual_capture_worker(self, tray_number: str) -> None:
         result = self._run_capture_safely(tray_number)
-        self.app.root.after(0, self._on_manual_capture_done, result)
+        self.app.root.after(0, self._on_manual_capture_done, result, tray_number)
 
-    def _on_manual_capture_done(self, result) -> None:
+    def _on_manual_capture_done(self, result, tray_number: str) -> None:
         if result.success:
             self.app.log_event(f"Manual capture saved: {result.panorama_path.name}")
+            # Only on success - a failed capture didn't change anything
+            self.app.update_tray_row(int(tray_number))
         else:
             self.app.log_event(f"Error: {result.error_message}", level=logging.ERROR)
 
         self._manual_capture_in_progress = False
-        self.app._populate_tray_table(self.app.search_var.get())
 
     def _on_door_change(self, is_open: bool) -> None:
         if is_open and self.state == State.IDLE:

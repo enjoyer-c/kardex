@@ -8,7 +8,6 @@ file works unchanged on both without manual edits.
 from pathlib import Path
 import cv2
 import sys
-import json
 
 # --- System -------------------------------------------------------
 if sys.platform.startswith("win32"):
@@ -25,35 +24,11 @@ else:
     CAP_BACKEND = cv2.CAP_ANY
 
 # --- USB-Cams ---------------------------------------------------------------
+# Saved left-to-right camera order (written by the Camera Setup window).
+# Loading it (plus the fallback discovery) lives in camera_setup.py -
+# see camera_setup.get_camera_devices()
 CAMERA_ORDER_FILE = BASE_DIR / "camera_order.json"
 
-def _load_camera_devices() -> list[str]:
-    """Loads the saved camera order (set via the Camera Setup window).
-    If none has been saved yet, falls back to auto-discovering
-    connected cameras via /dev/v4l/by-path (board-independent, unlike
-    by-path being tied to the physical port - by-id was tried first
-    but collides for identical camera models like two Logitech C920s,
-    which often report the same or an empty serial number).
-    """
-    if CAMERA_ORDER_FILE.exists():
-        try:
-            with open(CAMERA_ORDER_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            devices = data.get("devices", [])
-            if isinstance(devices, list) and all(isinstance(d, str) for d in devices):
-                return devices
-        except (json.JSONDecodeError, OSError):
-            pass
- 
-    by_path_dir = Path("/dev/v4l/by-path")
-    if by_path_dir.exists():
-        return sorted(
-            str(p) for p in by_path_dir.iterdir()
-            if p.name.endswith("video-index0") and "-usb-" in p.name
-        )
-    return []
-
-USB_CAMERA_DEVICES = _load_camera_devices()
 USB_CAMERA_FOURCC = "MJPG"
 USB_CAMERA_RESOLUTION = (1280, 720)
 USB_CAMERA_WARMUP_FRAMES = 15

@@ -30,6 +30,7 @@ Section 2: Resizable split (ttk.Panedwindow, vertical) between:
 """
 
 from __future__ import annotations
+from collections import deque
 import tkinter as tk
 from tkinter import ttk, simpledialog, messagebox
 from datetime import datetime
@@ -190,13 +191,6 @@ class App:
         self.status_text.set(text)
         bg, fg = STATUS_COLORS.get(state_name, ("#eeeeee", "#333333"))
         self.status_label.configure(bg=bg, fg=fg)
-
-    def refresh(self) -> None:
-        """Forces pending GUI redraws immediately - needed because a
-        status set right before a blocking call (QR scan, camera capture)
-        wouldn't otherwise repaint until the blocking call returns.
-        """
-        self.root.update_idletasks()
 
     def _handle_search_change(self, event=None) -> None:
         # Debounce: don't rebuild the table on every single keystroke, only 300ms after the user last typed
@@ -494,8 +488,9 @@ class App:
         self._render_camera_setup_slots()
 
     def _save_camera_setup_order(self) -> None:
+        # No need to update anything else - captures read the saved
+        # order fresh via camera_setup.get_camera_devices()
         camera_setup.save_camera_order(self._camera_setup_order)
-        config.USB_CAMERA_DEVICES = list(self._camera_setup_order)
         self.log_event("Camera order updated via Camera Setup")
         self._close_camera_setup_window()
 
@@ -579,11 +574,14 @@ class App:
 
         try:
             with open(log_file, "r", encoding="utf-8") as f:
-                lines = f.readlines()
+                # deque with maxlen only ever keeps the last max_lines
+                # lines while reading line by line - the rest of the
+                # (up to 5 MB) log file is never held in memory at once
+                last_lines = deque(f, maxlen=max_lines)
         except OSError:
             return
 
-        for line in lines[-max_lines:]:
+        for line in last_lines:
             line = line.rstrip("\n")
             if line:
                 self._log_entries.append(line)
@@ -632,17 +630,31 @@ class App:
         self._populate_tray_table()
         self.tray_table.focus_set()
 
-    def _get_last_capture_date(self, tray_number: int) -> str:
+    @staticmethod
+    def _latest_capture(tray_number: int) -> Optional[Path]:
+        """Path of the newest captured image of a tray, or None if the
+        tray has no image yet. Filenames contain the timestamp in a
+        sortable format, so sorting by name = sorting by time."""
         folder = config.OUTPUT_DIR / str(tray_number)
         images = sorted(folder.glob("finalFrame_*.jpg")) if folder.exists() else []
-        if not images:
-            return "-"
-        timestamp_str = images[-1].stem.replace("finalFrame_", "")
+        return images[-1] if images else None
+
+    @staticmethod
+    def _capture_timestamp(image_path: Path) -> Optional[datetime]:
+        """Reads the capture time from an image's filename
+        ("finalFrame_<timestamp>.jpg"), or None if it can't be parsed."""
+        timestamp_str = image_path.stem.replace("finalFrame_", "")
         try:
-            timestamp = datetime.strptime(timestamp_str, config.TIMESTAMP_FORMAT)
-            return timestamp.strftime("%d.%m.%Y")
+            return datetime.strptime(timestamp_str, config.TIMESTAMP_FORMAT)
         except ValueError:
+            return None
+
+    def _get_last_capture_date(self, tray_number: int) -> str:
+        image_path = self._latest_capture(tray_number)
+        if image_path is None:
             return "-"
+        timestamp = self._capture_timestamp(image_path)
+        return timestamp.strftime("%d.%m.%Y") if timestamp else "-"
 
     def _populate_tray_table(self, filter_query: str = "") -> None:
         self.tray_table.delete(*self.tray_table.get_children())
@@ -657,6 +669,26 @@ class App:
             self.tray_table.insert("", "end", values=(tray_number, description, last_opened))
 
         self._clear_preview()
+
+    def update_tray_row(self, tray_number: int) -> None:
+        """Refreshes just ONE tray after a new capture: its "Last Capture"
+        cell, plus the preview if exactly this tray is selected right now.
+        Much cheaper than _populate_tray_table (no re-reading inventory.txt,
+        no scanning all 50 folders), and the user's selection, preview and
+        scroll position stay as they are. Called from main.py."""
+        for row_id in self.tray_table.get_children():
+            tray_str, description, _last_capture = self.tray_table.item(row_id, "values")
+            if int(tray_str) != tray_number:
+                continue
+
+            self.tray_table.item(
+                row_id, values=(tray_str, description, self._get_last_capture_date(tray_number))
+            )
+            if row_id in self.tray_table.selection():
+                self._load_preview_image(tray_number)
+            return
+        # Tray not in the table right now (filtered out by the search) -
+        # nothing to do, it shows the new date once the search changes
 
     # --- Rename with right mouse button ----------------------------------------
 
@@ -802,21 +834,29 @@ class App:
         self._preview_info_var.set("Select a tray to preview its last captured image.")
 
     def _load_preview_image(self, tray_number: int) -> None:
-        folder = config.OUTPUT_DIR / str(tray_number)
-        images = sorted(folder.glob("finalFrame_*.jpg")) if folder.exists() else []
+        image_path = self._latest_capture(tray_number)
 
-        if not images:
+        if image_path is None:
             self._preview_photo = None
             self._preview_label.configure(image="")
             self._preview_info_var.set(f"Tray {tray_number} - no captured image yet.")
             return
 
-        image_path = images[-1]
-
         try:
-            pil_image = Image.open(image_path)
-            pil_image.thumbnail((1400, 900))  
-            self._preview_photo = ImageTk.PhotoImage(pil_image)
+            # "with" closes the file again afterwards (PhotoImage keeps
+            # its own copy of the pixels, so the file isn't needed anymore)
+            with Image.open(image_path) as pil_image:
+                # draft(): lets the JPEG decoder shrink the image WHILE
+                # decoding (by 1/2, 1/4 or 1/8) instead of decoding the full
+                # panorama first. thumbnail() then only does the remaining
+                # fine scaling. draft needs the REAL target size (same aspect
+                # ratio as the image) - with the plain (1400, 900) box it
+                # would never shrink a wide panorama, because its height is
+                # already below 900 after the first halving step.
+                scale = min(1400 / pil_image.width, 900 / pil_image.height, 1.0)
+                pil_image.draft("RGB", (int(pil_image.width * scale), int(pil_image.height * scale)))
+                pil_image.thumbnail((1400, 900))
+                self._preview_photo = ImageTk.PhotoImage(pil_image)
         except Exception as exc:
             self._preview_photo = None
             self._preview_label.configure(image="")
@@ -829,12 +869,11 @@ class App:
     def _format_capture_info(self, tray_number: int, image_path: Path) -> str:
         """Builds a human-readable "Tray N - taken on DD-MM-YYYY at
         HH:MM:SS" string from the timestamp encoded in the filename."""
-        timestamp_str = image_path.stem.replace("finalFrame_", "")
-        try:
-            timestamp = datetime.strptime(timestamp_str, config.TIMESTAMP_FORMAT)
+        timestamp = self._capture_timestamp(image_path)
+        if timestamp is not None:
             formatted = timestamp.strftime("%d-%m-%Y at %H:%M:%S")
-        except ValueError:
-            formatted = timestamp_str 
+        else:
+            formatted = image_path.stem.replace("finalFrame_", "")
 
         return f"Tray {tray_number} - taken on {formatted}"
 

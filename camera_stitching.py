@@ -35,7 +35,7 @@ def exclusive_cameras():
     Non-blocking, same as capture_and_stitch: if the cameras are already
     in use, CamerasBusyError is raised immediately instead of waiting."""
     if not _capture_lock.acquire(blocking=False):
-        raise CamerasBusyError("Cameras are busy - a capture is currently running")
+        raise CamerasBusyError("Cameras are busy - a capture or camera search is currently running")
     try:
         yield
     finally:
@@ -96,58 +96,61 @@ def capture_one(device: str) -> tuple[bool, "cv2.typing.MatLike | None", str | N
 def capture_and_stitch(camera_devices: list[str], tray_number: str) -> StitchResult:
     """Captures one frame from each camera IN PARALLEL. Each camera is still 
     individually opened. Stitches captures, and saves the result. Refuses to run
-    if a capture is already in progress."""
-
-    if not _capture_lock.acquire(blocking=False):
-        return StitchResult(success=False, error_message="Capture already in progress - request ignored")
-
+    if the cameras are already in use (another capture or a Camera Setup search)."""
     try:
-        results: list[tuple[bool, "cv2.typing.MatLike | None", str | None] | None] = [None] * len(camera_devices)
+        with exclusive_cameras():
+            return _capture_and_stitch_locked(camera_devices, tray_number)
+    except CamerasBusyError as exc:
+        return StitchResult(success=False, error_message=str(exc))
 
-        def _worker(index: int, device: str) -> None:
-            try:
-                results[index] = capture_one(device)
-            except Exception as exc:
-                results[index] = (False, None, f"Unexpected error on {device}: {exc}")
 
-        threads = [
-            threading.Thread(target=_worker, args=(i, device))
-            for i, device in enumerate(camera_devices)
-        ]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+def _capture_and_stitch_locked(camera_devices: list[str], tray_number: str) -> StitchResult:
+    """The actual capture + stitch. Only ever called while
+    exclusive_cameras() holds the camera lock (see capture_and_stitch)."""
+    results: list[tuple[bool, "cv2.typing.MatLike | None", str | None] | None] = [None] * len(camera_devices)
 
-        frames = []
-        for success, frame, error_message in results:
-            if not success:
-                return StitchResult(success=False, error_message=error_message)
-            frames.append(frame)
+    def _worker(index: int, device: str) -> None:
+        try:
+            results[index] = capture_one(device)
+        except Exception as exc:
+            results[index] = (False, None, f"Unexpected error on {device}: {exc}")
 
-        output_dir = config.OUTPUT_DIR / tray_number
-        output_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime(config.TIMESTAMP_FORMAT)
+    threads = [
+        threading.Thread(target=_worker, args=(i, device))
+        for i, device in enumerate(camera_devices)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
 
-        stitcher = cv2.Stitcher_create(config.STITCHER_MODE)
-        stitcher.setPanoConfidenceThresh(config.STICHER_CONFIDENCE_THRESHOLD)
-        status, panorama = stitcher.stitch(frames)
+    frames = []
+    for success, frame, error_message in results:
+        if not success:
+            return StitchResult(success=False, error_message=error_message)
+        frames.append(frame)
 
-        if status != cv2.Stitcher_OK:
-            return StitchResult(success=False, error_message=f"Stitching failed, status code: {status}")
+    output_dir = config.OUTPUT_DIR / tray_number
+    output_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime(config.TIMESTAMP_FORMAT)
 
-        pano_path = output_dir / f"finalFrame_{timestamp}.jpg"
+    stitcher = cv2.Stitcher_create(config.STITCHER_MODE)
+    stitcher.setPanoConfidenceThresh(config.STICHER_CONFIDENCE_THRESHOLD)
+    status, panorama = stitcher.stitch(frames)
 
-        # imwrite doesn't raise on failure (disk full, SSD gone, no write
-        # permission) - it just returns False. Without this check the
-        # capture would be reported as "saved" although no file exists.
-        # Also important: enforce_max_images below must NOT run then,
-        # otherwise it would delete an old image without a new one.
-        if not cv2.imwrite(str(pano_path), panorama):
-            return StitchResult(success=False, error_message=f"Could not save image: {pano_path}")
+    if status != cv2.Stitcher_OK:
+        return StitchResult(success=False, error_message=f"Stitching failed, status code: {status}")
 
-        enforce_max_images(output_dir, config.MAX_IMAGES_PER_TRAY)
+    pano_path = output_dir / f"finalFrame_{timestamp}.jpg"
 
-        return StitchResult(success=True, panorama_path=pano_path)
-    finally:
-        _capture_lock.release()
+    # imwrite doesn't raise on failure (disk full, SSD gone, no write
+    # permission) - it just returns False. Without this check the
+    # capture would be reported as "saved" although no file exists.
+    # Also important: enforce_max_images below must NOT run then,
+    # otherwise it would delete an old image without a new one.
+    if not cv2.imwrite(str(pano_path), panorama):
+        return StitchResult(success=False, error_message=f"Could not save image: {pano_path}")
+
+    enforce_max_images(output_dir, config.MAX_IMAGES_PER_TRAY)
+
+    return StitchResult(success=True, panorama_path=pano_path)

@@ -14,15 +14,11 @@ import camera_stitching
 CamerasBusyError = camera_stitching.CamerasBusyError
 
 
-def discover_cameras(max_cameras: int = 4) -> dict[str, "cv2.typing.MatLike"]:
-    """Returns {device path: preview frame} for all unique, actually-usable
-    connected USB cameras, in discovery order. The frame from the
-    functional test doubles as the preview image, so every camera only
-    has to be opened (and warmed up) ONCE.
-
-    Holds the camera lock for the whole search - raises CamerasBusyError
-    if a capture is currently running. Blocks for several seconds (warmup
-    frames per camera) - call it from a background thread, not from Tk.
+def _connected_camera_paths() -> list[str]:
+    """by-path device paths of all connected USB video devices (only
+    video-index0, duplicates removed). Does NOT open any camera - just
+    looks at /dev/v4l/by-path, so it's instant. Empty list on systems
+    without /dev/v4l/by-path (e.g. Windows).
 
     Uses by-path (not by-id): identical camera models (e.g. two
     Logitech C920s) often report the same or an empty serial number,
@@ -32,28 +28,49 @@ def discover_cameras(max_cameras: int = 4) -> dict[str, "cv2.typing.MatLike"]:
     """
     by_path_dir = Path("/dev/v4l/by-path")
     if not by_path_dir.exists():
-        return {}
+        return []
 
-    candidates = sorted(
-        p for p in by_path_dir.iterdir()
-        if p.name.endswith("video-index0") and "-usb-" in p.name
-    )
-
+    paths: list[str] = []
     seen_targets: set[str] = set()
+    for p in sorted(by_path_dir.iterdir()):
+        if not (p.name.endswith("video-index0") and "-usb-" in p.name):
+            continue
+        target = str(p.resolve())
+        if target in seen_targets:
+            continue  # just another name for a device we already have
+        seen_targets.add(target)
+        paths.append(str(p))
+    return paths
+
+
+def get_camera_devices() -> list[str]:
+    """The camera devices to capture with, in left-to-right order: the
+    order saved via Camera Setup, or - if none has been saved yet - all
+    connected cameras in by-path order as a fallback.
+    Read fresh on every call (cheap: one small JSON file), so a newly
+    saved order is used right away without any restart."""
+    return load_camera_order() or _connected_camera_paths()
+
+
+def discover_cameras(max_cameras: int = 4) -> dict[str, "cv2.typing.MatLike"]:
+    """Returns {device path: preview frame} for all unique, actually-usable
+    connected USB cameras, in discovery order. The frame from the
+    functional test doubles as the preview image, so every camera only
+    has to be opened (and warmed up) ONCE.
+
+    Holds the camera lock for the whole search - raises CamerasBusyError
+    if a capture is currently running. Blocks for several seconds (warmup
+    frames per camera) - call it from a background thread, not from Tk.
+    """
     found: dict[str, "cv2.typing.MatLike"] = {}
 
     with camera_stitching.exclusive_cameras():
-        for candidate in candidates:
-            target = str(candidate.resolve())
-            if target in seen_targets:
-                continue 
-
-            success, frame, _error = camera_stitching.capture_one(str(candidate))
+        for candidate in _connected_camera_paths():
+            success, frame, _error = camera_stitching.capture_one(candidate)
             if not success:
-                continue 
+                continue  # opens but can't actually deliver a frame (e.g. secondary interface)
 
-            seen_targets.add(target)
-            found[str(candidate)] = frame
+            found[candidate] = frame
 
             if len(found) >= max_cameras:
                 break
@@ -71,21 +88,10 @@ def check_saved_order() -> str | None:
     camera, so it's fast enough to run at every program start.
     Does nothing on systems without /dev/v4l/by-path (e.g. Windows).
     """
-    by_path_dir = Path("/dev/v4l/by-path")
-    if not by_path_dir.exists():
+    if not Path("/dev/v4l/by-path").exists():
         return None
 
-    connected: list[str] = []
-    seen_targets: set[str] = set()
-    for p in sorted(by_path_dir.iterdir()):
-        if not (p.name.endswith("video-index0") and "-usb-" in p.name):
-            continue
-        target = str(p.resolve())
-        if target in seen_targets:
-            continue  # just another name for a device we already have
-        seen_targets.add(target)
-        connected.append(str(p))
-
+    connected = _connected_camera_paths()
     saved = load_camera_order()
     if not saved:
         return "No camera order saved yet - please run Camera Setup."

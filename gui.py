@@ -90,6 +90,9 @@ class App:
         # set from main.py - called when the user triggers a manual capture
         self.on_manual_capture: Optional[Callable[[str], None]] = None
 
+        # TEMP door test: set from main.py - simulates a door open/close
+        self.on_simulate_door: Optional[Callable[[], None]] = None
+
         self._button_icons: dict[str, ImageTk.PhotoImage] = {}
         self._load_button_icons()
 
@@ -151,6 +154,13 @@ class App:
         )
         manual_button.grid(row=0, column=3, padx=(0, 10), sticky="e")
 
+        # --- TEMP door test (remove together with config.DOOR_TEST_BUTTON) ---
+        if config.DOOR_TEST_BUTTON:
+            ttk.Button(
+                top_frame, text="TEST: Toggle Door", command=self._handle_simulate_door,
+                style="Big.TButton",
+            ).grid(row=1, column=3, padx=(0, 10), pady=(12, 0), sticky="e")
+
         stacked_button_width = 14
         
         history_button = ttk.Button(
@@ -208,6 +218,11 @@ class App:
         if children:
             self.tray_table.see(children[0])
             self.tray_table.selection_set(children[0])
+
+    # --- TEMP door test (remove together with config.DOOR_TEST_BUTTON) ---
+    def _handle_simulate_door(self) -> None:
+        if self.on_simulate_door:
+            self.on_simulate_door()
 
     # --- Manual capture (popup window) ------------------------------------
 

@@ -56,16 +56,24 @@ class flow_controll:
             on_change=lambda is_open: self.app.root.after(0, self._on_door_change, is_open)
         )
 
-        # If the hall sensor couldn't be set up -> Log
+        # If the hall sensor couldn't be set up, show it in the History -
+        # otherwise nobody notices that door detection isn't working.
+        # getattr: the Windows mock doesn't have this attribute
         sensor_error = getattr(self.sensor, "error_message", None)
         if sensor_error:
             self.app.log_event(sensor_error, level=logging.ERROR)
 
         # Saved USB camera order still matches the connected cameras?
+        # (e.g. a camera was unplugged or moved to another USB port)
         camera_warning = camera_setup.check_saved_order()
         if camera_warning:
             self.app.log_event(camera_warning, level=logging.WARNING)
         self.app.on_manual_capture = self._handle_manual_capture_request
+
+        # TEMP door test - only the real sensor has simulate_toggle
+        # (on Windows the mock's Enter key does the same job)
+        if config.DOOR_TEST_BUTTON and hasattr(self.sensor, "simulate_toggle"):
+            self.app.on_simulate_door = self._simulate_door
 
         self._update_status()
 
@@ -225,6 +233,12 @@ class flow_controll:
             self.app.log_event(f"Error: {result.error_message}", level=logging.ERROR)
 
         self._manual_capture_in_progress = False
+
+    # --- TEMP door test (remove together with config.DOOR_TEST_BUTTON) ---
+    def _simulate_door(self) -> None:
+        self.sensor.simulate_toggle()
+        state_text = "OPEN" if self.sensor.is_open() else "CLOSED"
+        self.app.log_event(f"TEST: door simulated {state_text}", level=logging.WARNING)
 
     def _on_door_change(self, is_open: bool) -> None:
         if is_open and self.state == State.IDLE:

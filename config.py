@@ -47,6 +47,10 @@ QR_SCAN_TIMEOUT_S = 10.0                # max waiting time for QR-Code [s]
 HALL_SENSOR_GPIO = 17 #Pin11
 HALL_SENSOR_BOUNCE_TIME_MS = 350
 
+# TEMP door test: shows a "TEST: Toggle Door" button in the GUI that simulates the magnet (open/close). Set to False to hide it again.
+DOOR_TEST_BUTTON = True
+
+
 # --- Data -----------------------------------------------------------------
 if sys.platform.startswith("linux"):
     SSD_DIR = Path("/mnt/kardex_ssd")

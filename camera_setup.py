@@ -61,6 +61,48 @@ def discover_cameras(max_cameras: int = 4) -> dict[str, "cv2.typing.MatLike"]:
     return found
 
 
+def check_saved_order() -> str | None:
+    """Compares the saved camera order (camera_order.json) with the
+    cameras that are connected right now. Returns a warning text if
+    they don't match (camera missing / new camera / nothing saved yet),
+    or None if everything fits.
+
+    Only looks at the /dev/v4l/by-path entries - does NOT open any
+    camera, so it's fast enough to run at every program start.
+    Does nothing on systems without /dev/v4l/by-path (e.g. Windows).
+    """
+    by_path_dir = Path("/dev/v4l/by-path")
+    if not by_path_dir.exists():
+        return None
+
+    connected: list[str] = []
+    seen_targets: set[str] = set()
+    for p in sorted(by_path_dir.iterdir()):
+        if not (p.name.endswith("video-index0") and "-usb-" in p.name):
+            continue
+        target = str(p.resolve())
+        if target in seen_targets:
+            continue  # just another name for a device we already have
+        seen_targets.add(target)
+        connected.append(str(p))
+
+    saved = load_camera_order()
+    if not saved:
+        return "No camera order saved yet - please run Camera Setup."
+
+    missing = [d for d in saved if d not in connected]
+    new = [d for d in connected if d not in saved]
+    if not missing and not new:
+        return None
+
+    parts = []
+    if missing:
+        parts.append("missing: " + ", ".join(short_name(d) for d in missing))
+    if new:
+        parts.append("new: " + ", ".join(short_name(d) for d in new))
+    return "Camera order changed (" + "; ".join(parts) + ") - please check Camera Setup."
+
+
 def short_name(device: str) -> str:
     """Shortens a by-path device path down to just the last, most
     distinguishing segment, for display purposes."""

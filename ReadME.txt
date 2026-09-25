@@ -9,7 +9,7 @@ Runs cross-platform: real hardware on the Raspberry Pi, simulated hardware (mock
 ## Setup (Raspberry Pi)
 
 chmod +x setup_pi.sh
-./setup_pi.sh
+./setup.sh
 
 Installs system and Python packages, creates a .venv (--system-site-packages, so picamera2 can access the system-wide libcamera libraries).
 

@@ -127,10 +127,6 @@ class App:
             hint_frame, text="• Right-click: rename description",
             font=("Arial", 10), fg="black", bg="white",
         ).pack(anchor="w")
-        tk.Label(
-            hint_frame, text="• Camera Setup takes a few seconds to load",
-            font=("Arial", 10), fg="black", bg="white",
-        ).pack(anchor="w")
 
 
         self.status_text = tk.StringVar(value="IDLE - waiting for door to open")
@@ -718,7 +714,21 @@ class App:
             return
 
         tray_number = int(tray_number_str)
-        inventory.update_description(tray_number, new_description)
+        try:
+            inventory.update_description(tray_number, new_description)
+        except (ValueError, OSError) as exc:
+            # ValueError: tray not in inventory.txt (file too short)
+            # OSError: file couldn't be written (no permission, disk
+            # full, file locked, ...). Table stays unchanged, so it still
+            # shows what's actually saved in the file.
+            self.log_event(f"Rename of tray {tray_number} failed: {exc}", level=logging.ERROR)
+            messagebox.showerror(
+                "Rename failed",
+                f"Tray {tray_number} could not be renamed:\n\n{exc}",
+                parent=self.root,
+            )
+            self.tray_table.focus_set()
+            return
 
         # Update the table directly instead of reloading it entirely
         self.tray_table.item(row_id, values=(tray_number, new_description, last_opened))

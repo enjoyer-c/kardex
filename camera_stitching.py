@@ -137,7 +137,14 @@ def capture_and_stitch(camera_devices: list[str], tray_number: str) -> StitchRes
             return StitchResult(success=False, error_message=f"Stitching failed, status code: {status}")
 
         pano_path = output_dir / f"finalFrame_{timestamp}.jpg"
-        cv2.imwrite(str(pano_path), panorama)
+
+        # imwrite doesn't raise on failure (disk full, SSD gone, no write
+        # permission) - it just returns False. Without this check the
+        # capture would be reported as "saved" although no file exists.
+        # Also important: enforce_max_images below must NOT run then,
+        # otherwise it would delete an old image without a new one.
+        if not cv2.imwrite(str(pano_path), panorama):
+            return StitchResult(success=False, error_message=f"Could not save image: {pano_path}")
 
         enforce_max_images(output_dir, config.MAX_IMAGES_PER_TRAY)
 

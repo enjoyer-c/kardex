@@ -10,6 +10,7 @@ import traceback
 import config
 import gui
 import inventory
+import camera_setup
 
 if sys.platform.startswith("win32"):
     import hall_sensor_mock as hall_sensor
@@ -54,6 +55,19 @@ class flow_controll:
         self.sensor = hall_sensor.HallSensor(
             on_change=lambda is_open: self.app.root.after(0, self._on_door_change, is_open)
         )
+
+        # If the hall sensor couldn't be set up, show it in the History -
+        # otherwise nobody notices that door detection isn't working.
+        # getattr: the Windows mock doesn't have this attribute
+        sensor_error = getattr(self.sensor, "error_message", None)
+        if sensor_error:
+            self.app.log_event(sensor_error, level=logging.ERROR)
+
+        # Saved USB camera order still matches the connected cameras?
+        # (e.g. a camera was unplugged or moved to another USB port)
+        camera_warning = camera_setup.check_saved_order()
+        if camera_warning:
+            self.app.log_event(camera_warning, level=logging.WARNING)
         self.app.on_manual_capture = self._handle_manual_capture_request
 
         self._update_status()

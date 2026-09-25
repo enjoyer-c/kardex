@@ -19,17 +19,31 @@ class HallSensor:
     def __init__(self, on_change: Optional[Callable[[bool], None]] = None):
         self._on_change = on_change
         self._is_open = False
+
+        # None = sensor set up fine. Otherwise holds a readable error message
+        self.error_message: Optional[str] = None
  
         if not IS_RPI:
-            print("[hall_sensor] Not running - sensor disabled.")
+            self.error_message = (
+                "Hall sensor NOT available - gpiozero is not installed. "
+                "Door detection is disabled!"
+            )
             return
 
-
-        self._button = Button(
-            config.HALL_SENSOR_GPIO,
-            pull_up=True,
-            bounce_time=config.HALL_SENSOR_BOUNCE_TIME_MS / 1000.0,
-        )
+        try:
+            self._button = Button(
+                config.HALL_SENSOR_GPIO,
+                pull_up=True,
+                bounce_time=config.HALL_SENSOR_BOUNCE_TIME_MS / 1000.0,
+            )
+        except Exception as exc:
+            # e.g. GPIO already in use by another program, or no GPIO
+            # access - previously this crashed the whole program on startup
+            self.error_message = (
+                f"Hall sensor NOT available - GPIO {config.HALL_SENSOR_GPIO} "
+                f"could not be set up ({exc}). Door detection is disabled!"
+            )
+            return
  
         self._button.when_pressed = self._handle_change
         self._button.when_released = self._handle_change
@@ -44,4 +58,3 @@ class HallSensor:
 
     def is_open(self) -> bool:
         return self._is_open
-

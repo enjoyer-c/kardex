@@ -324,26 +324,23 @@ class App:
         self._camera_setup_window.title("Camera Setup")
         self._camera_setup_window.resizable(False, False)
 
+        # Layout: everything static (text, buttons, status) sits ABOVE the
+        # camera slots and is left-aligned (anchor="w"). When the cameras
+        # show up, the window only grows downwards/to the right - so none of
+        # these widgets ever has to move. (On the Pi, widgets that got moved
+        # by a window resize sometimes weren't redrawn until hovered.)
         ttk.Label(
             self._camera_setup_window,
             text="Identify each camera by its picture, then use the arrows to set left-to-right order.",
             font=("Arial", 11),
-        ).pack(padx=15, pady=(15, 5))
-
-        self._camera_setup_status_var = tk.StringVar(value="")
-        ttk.Label(
-            self._camera_setup_window, textvariable=self._camera_setup_status_var, font=("Arial", 10, "italic")
-        ).pack(pady=(0, 10))
-
-        self._camera_setup_slots_frame = ttk.Frame(self._camera_setup_window)
-        self._camera_setup_slots_frame.pack(padx=15, pady=(0, 10))
+        ).pack(anchor="w", padx=15, pady=(15, 10))
 
         button_frame = ttk.Frame(self._camera_setup_window)
-        button_frame.pack(pady=(0, 15))
+        button_frame.pack(anchor="w", padx=15, pady=(0, 10))
         self._camera_setup_refresh_button = ttk.Button(
             button_frame, text="Refresh All", command=self._start_camera_discovery
         )
-        self._camera_setup_refresh_button.pack(side="left", padx=5)
+        self._camera_setup_refresh_button.pack(side="left", padx=(0, 5))
         self._camera_setup_save_button = ttk.Button(
             button_frame, text="Save Order", command=self._save_camera_setup_order
         )
@@ -352,9 +349,17 @@ class App:
 
         # Ribbon cam (QR scanner) needs a real live view for fine focus/position adjustment. Opens as a separate process.
         ttk.Button(
-            self._camera_setup_window, text="Live: Ribbon Cam (QR Focus)",
+            button_frame, text="Live: Ribbon Cam (QR Focus)",
             command=self._launch_ribbon_cam_preview,
-        ).pack(pady=(0, 15))
+        ).pack(side="left", padx=(25, 0))
+
+        self._camera_setup_status_var = tk.StringVar(value="")
+        ttk.Label(
+            self._camera_setup_window, textvariable=self._camera_setup_status_var, font=("Arial", 10, "italic")
+        ).pack(anchor="w", padx=15, pady=(0, 10))
+
+        self._camera_setup_slots_frame = ttk.Frame(self._camera_setup_window)
+        self._camera_setup_slots_frame.pack(anchor="w", padx=15, pady=(0, 15))
 
         self._camera_setup_window.protocol("WM_DELETE_WINDOW", self._close_camera_setup_window)
 

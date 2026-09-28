@@ -15,11 +15,10 @@ source .venv/bin/activate
 python3 main.py
 ```
 
-`setup.sh` installs **all** dependencies via apt (no pip - avoids version conflicts, e.g. numpy vs. picamera2) and creates a `.venv` with `--system-site-packages`.
+`setup.sh` installs **all** dependencies via apt and creates a `.venv` with `--system-site-packages`.
 
 Optional: `kardex.desktop` (copy to `~/.local/share/applications/`, adjust paths) adds a start-menu entry and the app icon in the taskbar.
 
-> Don't run `Setup_RibbonCAM.py` on its own while a QR scan is running - both need the same camera.
 
 ---
 
@@ -34,14 +33,14 @@ The flow is **not** a fixed sequence of door events. It is bound to what the rib
 
 Typical cycle:
 
-1. Tray moves out → door opens → no tray known → no photos
-2. Tray at delivery position → door closes → QR found → tray number known
-3. Tray goes back → door opens → **photos taken** → door closes → no QR → tray number cleared
+1. Tray is ordered → door opens → no tray known → no photos → tray moves out
+2. Tray reaches the delivery position → door closes → QR found → tray number known
+3. Tray is sent back → door opens → photos taken → tray moves in → door closes → no QR → tray number cleared
+
 
 A false trigger (e.g. a hand in the light barrier) can't break the flow: without a tray at the front it leads nowhere; with a tray at the front it just produces one extra photo - the final photo is still taken when the tray really goes back.
 
-Edge cases handled: door opens while a scan is running (photos are taken as soon as the scan finds a tray), door closes again during a scan (rescan), door opens while a capture is running (a second capture follows right after), repeated sensor events without a real change (ignored).
-
+Edge cases handled: door opens while a scan is running (photos are taken as soon as the scan finds a tray), door closes again during a scan (rescan), door opens while a capture is running (a second capture follows right after).
 ---
 
 ## Modules
@@ -62,7 +61,7 @@ Ribbon camera (Pi HQ Camera) via picamera2 + pyzbar. Scans until a QR code is fo
 
 ### camera_stitching.py
 - Each USB camera is opened, warmed up, read and released per capture; all cameras are read in parallel
-- `exclusive_cameras()`: one lock for all camera access (captures and Camera Setup search) - never two at once
+- `exclusive_cameras()`: one lock for all camera access (captures and Camera Setup search)
 - OpenCV stitcher → panorama saved as `OUTPUT_DIR/<tray>/finalFrame_<timestamp>.jpg`; save failures are detected; max. `MAX_IMAGES_PER_TRAY` images per tray (oldest deleted)
 
 ### camera_setup.py
@@ -79,9 +78,9 @@ Reads/writes `inventory.txt` (one description per line, line 1 = tray 1). Writes
 
 ### gui.py
 - Color-coded status, searchable tray table, image preview of the selected tray's latest capture
-- Right-click → rename description (with error message if saving fails)
+- Right-click → rename description
 - After a capture, only the affected table row (and its preview) is refreshed
-- Camera Setup (always available): camera snapshots, reorder via arrows, Refresh All re-discovers, live ribbon-cam preview (only one at a time); search runs in the background
+- Camera Setup: camera snapshots, reorder via arrows, Refresh All re-discovers, live ribbon-cam preview; search runs in the background
 - Temporary: "TEST: Toggle Door" button simulates the door sensor (Pi only; on Windows use Enter in the console)
 
 ### Mock modules (Windows)
@@ -93,6 +92,5 @@ Reads/writes `inventory.txt` (one description per line, line 1 = tray 1). Writes
 
 - Parallel capture with more than 2 USB cameras not yet verified on real hardware (USB bandwidth)
 - If the door opens again during a running capture, the follow-up capture starts only after stitching of the first one has finished
-- Extra photos from false triggers count towards `MAX_IMAGES_PER_TRAY`
 - A disconnected sensor cable can't be detected by software (reads the same as an open door)
 - The Windows QR mock always returns tray 1, so "tray gone" can't be tested on Windows

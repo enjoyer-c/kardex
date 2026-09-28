@@ -50,11 +50,10 @@ import camera_setup
 
 
 STATUS_COLORS = {
-    "IDLE": ("#e8f5e9", "#2e7d32"),
-    "OUTBOUND": ("#fff3e0", "#e65100"),
-    "AT_DELIVERY_POSITION": ("#e3f2fd", "#1565c0"),
-    "CAPTURING_AND_STITCHING": ("#e3f2fd", "#1565c0"),
-    "RETURNING": ("#fff3e0", "#e65100"),
+    "NO_TRAY": ("#e8f5e9", "#2e7d32"),        # green  - waiting, nothing to do
+    "SCANNING": ("#fff3e0", "#e65100"),       # orange - ribbon cam is looking
+    "TRAY_PRESENT": ("#e3f2fd", "#1565c0"),   # blue   - tray at the front
+    "CAPTURING": ("#f3e5f5", "#6a1b9a"),      # purple - photos being taken
 }
 
 
@@ -133,7 +132,7 @@ class App:
         ).pack(anchor="w")
 
 
-        self.status_text = tk.StringVar(value="IDLE - waiting for door to open")
+        self.status_text = tk.StringVar(value="Waiting - no tray at the front")
         self.status_label = tk.Label(
             top_frame,
             textvariable=self.status_text,
@@ -142,7 +141,7 @@ class App:
             pady=8,
         )
         self.status_label.grid(row=0, column=1)
-        bg, fg = STATUS_COLORS["IDLE"]
+        bg, fg = STATUS_COLORS["NO_TRAY"]
         self.status_label.configure(bg=bg, fg=fg)
 
         style = ttk.Style()
@@ -197,7 +196,7 @@ class App:
         ).pack(side="left", padx=(8, 0))
 
 
-    def set_status(self, text: str, state_name: str = "IDLE") -> None:
+    def set_status(self, text: str, state_name: str = "NO_TRAY") -> None:
         self.status_text.set(text)
         bg, fg = STATUS_COLORS.get(state_name, ("#eeeeee", "#333333"))
         self.status_label.configure(bg=bg, fg=fg)

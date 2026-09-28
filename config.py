@@ -42,14 +42,15 @@ MAX_IMAGES_PER_TRAY = 3
 # --- QR-Code-Cam -----------------------------------------------------------
 QR_CAPTURE_SIZE = (1332, 990)   
 QR_SCAN_TIMEOUT_S = 10.0                # max waiting time for QR-Code [s]
+QR_SCAN_INTERVAL_S = 0.1                # pause between two scan attempts [s]
 
 # --- Hall-Sensor -----------------------------------------------------------
 HALL_SENSOR_GPIO = 17 #Pin11
 HALL_SENSOR_BOUNCE_TIME_MS = 350
 
-# TEMP door test: shows a "TEST: Toggle Door" button in the GUI that simulates the magnet (open/close). Set to False to hide it again.
+# TEMP door test: shows a "TEST: Toggle Door" button in the GUI that
+# simulates the magnet (open/close). Set to False to hide it again.
 DOOR_TEST_BUTTON = True
-
 
 # --- Data -----------------------------------------------------------------
 if sys.platform.startswith("linux"):

@@ -35,22 +35,43 @@ logging.basicConfig(
     ],
 )
 
-class State(Enum):
-    IDLE = auto()                    # Door closed, waiting for a new request
-    OUTBOUND = auto()                # Door open (1st time) - tray moving to delivery position
-    AT_DELIVERY_POSITION = auto()    # Door closed - QR gets scanned immediately here, then waits while user loads/unloads
-    CAPTURING_AND_STITCHING = auto() # Door open (2nd time) - take photos + stitch before tray starts moving
-    RETURNING = auto()               # Tray driving back into the warehouse, door closing
+class Status(Enum):
+    """What the status bar shows. NOT a step-by-step state machine anymore -
+    it's derived from the current situation (see _current_status)."""
+    NO_TRAY = auto()       # No tray at the front - nothing to do
+    SCANNING = auto()      # Door just closed - ribbon cam checks for a QR code
+    TRAY_PRESENT = auto()  # QR code seen - tray is at the front, tray number known
+    CAPTURING = auto()     # USB cameras are taking photos / stitching
+
 
 class flow_controll:
-    """Owns the state machine and reacts to hardware events and GUI actions by
-    driving transitions between states, triggering QR scans and camera captures as needed."""
-        
+    """Reacts to the door sensor and GUI actions. The whole logic is two rules:
+
+    - Door CLOSES -> ribbon cam checks once (for up to QR_SCAN_TIMEOUT_S):
+      QR code visible = this tray is at the front, no code = no tray.
+    - Door OPENS  -> if a tray is at the front: take photos immediately.
+
+    No counting of door events and no fixed sequence - so a false trigger
+    (e.g. a hand in the light barrier) can't shift anything: it either
+    leads nowhere (no tray at the front) or just produces one extra photo.
+    """
+
     def __init__(self, app: gui.App):
         self.app = app
-        self.state = State.IDLE
+
+        # The one important piece of knowledge: which tray is at the front
+        # right now (tray number as seen by the ribbon cam at the last
+        # door close), or None if no tray is there.
         self.current_tray_number: str | None = None
-        self._manual_capture_in_progress = False
+
+        # Last known door state - None until the first sensor event.
+        # Used to ignore repeated events that aren't a real change.
+        self._door_open: bool | None = None
+
+        self._scan_running = False
+        self._rescan_requested = False   # door closed again while a scan was running
+        self._capture_running = False    # automatic OR manual capture in progress
+        self._capture_pending = False    # door opened again while a capture was running
 
         self.sensor = hall_sensor.HallSensor(
             on_change=lambda is_open: self.app.root.after(0, self._on_door_change, is_open)
@@ -77,31 +98,77 @@ class flow_controll:
 
         self._update_status()
 
+    # --- Status bar ---------------------------------------------------------
+
+    def _current_status(self) -> Status:
+        if self._capture_running:
+            return Status.CAPTURING
+        if self._scan_running:
+            return Status.SCANNING
+        if self.current_tray_number is not None:
+            return Status.TRAY_PRESENT
+        return Status.NO_TRAY
+
     def _update_status(self) -> None:
+        status = self._current_status()
         texts = {
-            State.IDLE: "IDLE - waiting for Door to open",
-            State.OUTBOUND: "DELIVERY - tray is moving",
-            State.AT_DELIVERY_POSITION: f"tray #{self.current_tray_number}",
-            State.CAPTURING_AND_STITCHING: "CAPTURE - final image is beeing taken",
-            State.RETURNING: "RETURNING - tray is moving back",
+            Status.NO_TRAY: "Waiting - no tray at the front",
+            Status.SCANNING: "QR SCAN - checking for a tray",
+            Status.TRAY_PRESENT: f"Tray #{self.current_tray_number} at the front",
+            Status.CAPTURING: "CAPTURE - photos are being taken",
         }
+        self.app.set_status(texts[status], status.name)
 
-        self.app.set_status(texts[self.state], self.state.name)
+    # --- Door events ----------------------------------------------------------
 
-    def _handle_outbound_start(self) -> None:
-        """IDLE -> OUTBOUND. First door open."""
-        self.state = State.OUTBOUND
+    def _on_door_change(self, is_open: bool) -> None:
+        # Same state as last time = no real change (e.g. a repeated sensor
+        # event) - ignore it, otherwise we'd scan/capture twice
+        if is_open == self._door_open:
+            return
+        self._door_open = is_open
+
+        if is_open:
+            self._handle_door_opened()
+        else:
+            self._handle_door_closed()
+
+    def _handle_door_closed(self) -> None:
+        """Door closed -> check with the ribbon cam which tray (if any) is
+        at the front now. Also happens once at program start, since the
+        sensor reports its initial state."""
+        if self._scan_running:
+            # A scan is still running from the previous close - its result
+            # might be outdated by now, so look again once it's finished
+            self._rescan_requested = True
+            return
+        self._start_qr_scan()
+
+    def _handle_door_opened(self) -> None:
+        """Door opened -> photos, but only if a tray is at the front."""
+        if self.current_tray_number is None:
+            if not self._scan_running:
+                self.app.log_event("Door opened - no tray at the front, no photos")
+            # If a scan is still running, _on_qr_scan_done catches up on
+            # the photos as soon as it finds a tray
+            return
+        self._start_capture(self.current_tray_number)
+
+    # --- QR scan (ribbon cam) -------------------------------------------------
+
+    def _start_qr_scan(self) -> None:
+        # Forget the previous tray FIRST: after a door close, only what the
+        # camera sees NOW counts. Keeping the old number would make the next
+        # "tray moves out" door opening take photos under the wrong tray.
+        self.current_tray_number = None
+        self._scan_running = True
         self._update_status()
-
-    def _handle_delivery_arrival(self) -> None:
-        """Door closed at delivery position - starts the QR scan in a
-        background thread so the GUI stays usable while it runs."""
         threading.Thread(target=self._qr_scan_worker, daemon=True).start()
 
     def _qr_scan_worker(self) -> None:
         """Runs in a background thread. ALWAYS reports back to the Tk
-        main thread - even if the scan crashes - otherwise the state
-        machine would stay stuck in OUTBOUND forever."""
+        main thread - even if the scan crashes - otherwise _scan_running
+        would stay True forever."""
         qr_result = None
         error_message = None
         try:
@@ -114,14 +181,16 @@ class flow_controll:
         self.app.root.after(0, self._on_qr_scan_done, qr_result, error_message)
 
     def _on_qr_scan_done(self, qr_result, error_message: str | None = None) -> None:
+        self._scan_running = False
+
         if error_message is not None:
             self.app.log_event(f"Error: {error_message}", level=logging.ERROR)
         elif qr_result is None:
-            self.app.log_event("Error: No QR-Code found", level=logging.ERROR)
+            # Normal case, e.g. after a tray went back in - not an error anymore
+            self.app.log_event("No QR code visible - no tray at the front")
         else:
             # QR content comes from outside - only accept valid tray
-            # numbers, normalized ("01" -> "1"). Invalid content is
-            # treated like "no QR found", so the capture gets skipped.
+            # numbers, normalized ("01" -> "1")
             tray_number = inventory.normalize_tray_number(qr_result.data)
             if tray_number is None:
                 self.app.log_event(
@@ -130,37 +199,42 @@ class flow_controll:
                 )
             else:
                 self.current_tray_number = tray_number
+                self.app.log_event(f"Tray {tray_number} detected at the front")
 
-        self.state = State.AT_DELIVERY_POSITION
+        # Door closed again (after opening) while we were scanning: this
+        # result may already be outdated - look again
+        if self._rescan_requested:
+            self._rescan_requested = False
+            if self._door_open is False:
+                self._start_qr_scan()
+                return
+
         self._update_status()
 
-        # Door events that arrived WHILE the scan was running were
-        # ignored (state was still OUTBOUND). If the door is already
-        # open again by now, catch up on the missed "2nd door open".
-        if self.sensor.is_open():
-            self.app.log_event("Door opened during QR scan - continuing with capture")
-            self._handle_return_trigger()
+        # Door opened while the scan was still running (e.g. quickly after
+        # closing): the photos were skipped back then - take them now
+        if self._door_open and self.current_tray_number is not None:
+            self.app.log_event("Door opened during QR scan - taking photos now")
+            self._start_capture(self.current_tray_number)
 
-    def _handle_return_trigger(self) -> None:
-        """Door open (2nd time) - starts the capture+stitch in a
-        background thread, same reasoning as the QR scan above."""
-        self.state = State.CAPTURING_AND_STITCHING
-        self._update_status()
+    # --- Capture (USB cameras) ------------------------------------------------
 
-        if self.current_tray_number is None:
-            self.app.log_event("Capture skipped (no tray-nummer)", level=logging.WARNING)
-            self.state = State.RETURNING
-            self._update_status()
+    def _start_capture(self, tray_number: str) -> None:
+        if self._capture_running:
+            # e.g. false trigger photo still running, and the door opens
+            # again for real - that one must not get lost, it's the final one
+            self._capture_pending = True
+            self.app.log_event("Capture already running - another one follows right after")
             return
 
-        threading.Thread(
-            target=self._capture_worker, args=(self.current_tray_number,), daemon=True
-        ).start()
+        self._capture_running = True
+        self._update_status()
+        threading.Thread(target=self._capture_worker, args=(tray_number,), daemon=True).start()
 
     def _run_capture_safely(self, tray_number: str):
         """Wraps capture_and_stitch so it ALWAYS returns a StitchResult,
         even if something inside crashes (cv2.error, disk full, ...).
-        Used by both the automatic and the manual capture worker."""
+        Used by both the automatic and the manual capture."""
         try:
             return camera_stitching.capture_and_stitch(
                 camera_setup.get_camera_devices(), tray_number=tray_number
@@ -176,79 +250,42 @@ class flow_controll:
         self.app.root.after(0, self._on_capture_done, result, tray_number)
 
     def _on_capture_done(self, result, tray_number: str) -> None:
+        self._capture_running = False
+
         if result.success:
-            self.app.log_event(f"Capture saved: {result.panorama_path.name}")
-            # Only this tray's row (+ its preview, if selected) gets
-            # refreshed - not the whole table
+            self.app.log_event(f"Capture saved for tray {tray_number}: {result.panorama_path.name}")
+            # Only this tray's row (+ its preview, if selected) gets refreshed
             self.app.update_tray_row(int(tray_number))
         else:
             self.app.log_event(f"Error: {result.error_message}", level=logging.ERROR)
 
-        self.state = State.RETURNING
+        if self._capture_pending:
+            self._capture_pending = False
+            # Only if a tray is still known - if the door closed in between
+            # and the scan found nothing, there's nothing to photograph
+            if self.current_tray_number is not None:
+                self._start_capture(self.current_tray_number)
+                return
+
         self._update_status()
 
-        # Same catch-up as after the QR scan: if the door already
-        # closed while capturing/stitching, that event was ignored -
-        # the tray is already back, so go straight to IDLE.
-        if not self.sensor.is_open():
-            self.app.log_event("Door closed during capture - returning to IDLE")
-            self._handle_returned()
-
-    def _handle_returned(self) -> None:
-        """RETURNING -> IDLE. Door final closing, tray is in warehouse."""
-        self.current_tray_number = None
-        self.state = State.IDLE
-        self._update_status()
+    # --- Manual capture -------------------------------------------------------
 
     def _handle_manual_capture_request(self, tray_number: str) -> None:
-        """Triggered from the GUI's manual-capture button. Only allowed
-        while IDLE and no other manual capture is already running, so
-        it can't collide with the automatic door-sensor flow or with itself."""
-
-        if self.state != State.IDLE:
-            self.app.log_event("Manual capture rejected - system is busy", level=logging.WARNING)
+        """Triggered from the GUI's manual-capture button. Allowed any time,
+        except while another capture (automatic or manual) is running."""
+        if self._capture_running:
+            self.app.log_event("Manual capture rejected - a capture is already running", level=logging.WARNING)
             return
 
-        if self._manual_capture_in_progress:
-            self.app.log_event("Manual capture rejected - already running", level=logging.WARNING)
-            return
-
-        self._manual_capture_in_progress = True
         self.app.log_event(f"Manual capture started for tray {tray_number}")
-
-        threading.Thread(
-            target=self._manual_capture_worker, args=(tray_number,), daemon=True
-        ).start()
-
-    def _manual_capture_worker(self, tray_number: str) -> None:
-        result = self._run_capture_safely(tray_number)
-        self.app.root.after(0, self._on_manual_capture_done, result, tray_number)
-
-    def _on_manual_capture_done(self, result, tray_number: str) -> None:
-        if result.success:
-            self.app.log_event(f"Manual capture saved: {result.panorama_path.name}")
-            # Only on success - a failed capture didn't change anything
-            self.app.update_tray_row(int(tray_number))
-        else:
-            self.app.log_event(f"Error: {result.error_message}", level=logging.ERROR)
-
-        self._manual_capture_in_progress = False
+        self._start_capture(tray_number)
 
     # --- TEMP door test (remove together with config.DOOR_TEST_BUTTON) ---
     def _simulate_door(self) -> None:
         self.sensor.simulate_toggle()
         state_text = "OPEN" if self.sensor.is_open() else "CLOSED"
         self.app.log_event(f"TEST: door simulated {state_text}", level=logging.WARNING)
-
-    def _on_door_change(self, is_open: bool) -> None:
-        if is_open and self.state == State.IDLE:
-            self._handle_outbound_start()
-        elif not is_open and self.state == State.OUTBOUND:
-            self._handle_delivery_arrival()
-        elif is_open and self.state == State.AT_DELIVERY_POSITION:
-            self._handle_return_trigger()
-        elif not is_open and self.state == State.RETURNING:
-            self._handle_returned()
 
 
 def _set_windows_app_id() -> None:

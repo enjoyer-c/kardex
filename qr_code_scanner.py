@@ -64,6 +64,10 @@ def wait_for_qr(timeout_s: float = config.QR_SCAN_TIMEOUT_S) -> Optional[QRResul
             result = scan_frame(frame)
             if result is not None:
                 return result
+            # Short pause between attempts: decoding every single frame
+            # keeps a CPU core busy the whole scan - ~10 tries per second
+            # are plenty, and a code is still found at most one pause later
+            time.sleep(config.QR_SCAN_INTERVAL_S)
         return None
     finally:
         picam.stop()

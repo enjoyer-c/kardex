@@ -36,8 +36,7 @@ logging.basicConfig(
 )
 
 class Status(Enum):
-    """What the status bar shows. NOT a step-by-step state machine anymore -
-    it's derived from the current situation (see _current_status)."""
+    """see _current_status."""
     NO_TRAY = auto()       # No tray at the front - nothing to do
     SCANNING = auto()      # Door just closed - ribbon cam checks for a QR code
     TRAY_PRESENT = auto()  # QR code seen - tray is at the front, tray number known
@@ -50,22 +49,14 @@ class flow_controll:
     - Door CLOSES -> ribbon cam checks once (for up to QR_SCAN_TIMEOUT_S):
       QR code visible = this tray is at the front, no code = no tray.
     - Door OPENS  -> if a tray is at the front: take photos immediately.
-
-    No counting of door events and no fixed sequence - so a false trigger
-    (e.g. a hand in the light barrier) can't shift anything: it either
-    leads nowhere (no tray at the front) or just produces one extra photo.
     """
 
     def __init__(self, app: gui.App):
         self.app = app
 
-        # The one important piece of knowledge: which tray is at the front
-        # right now (tray number as seen by the ribbon cam at the last
-        # door close), or None if no tray is there.
         self.current_tray_number: str | None = None
 
         # Last known door state - None until the first sensor event.
-        # Used to ignore repeated events that aren't a real change.
         self._door_open: bool | None = None
 
         self._scan_running = False
@@ -77,22 +68,18 @@ class flow_controll:
             on_change=lambda is_open: self.app.root.after(0, self._on_door_change, is_open)
         )
 
-        # If the hall sensor couldn't be set up, show it in the History -
-        # otherwise nobody notices that door detection isn't working.
-        # getattr: the Windows mock doesn't have this attribute
+        # If the hall sensor couldn't be set up, show it in the History; otherwise nobody notices that door detection isn't working.
         sensor_error = getattr(self.sensor, "error_message", None)
         if sensor_error:
             self.app.log_event(sensor_error, level=logging.ERROR)
 
         # Saved USB camera order still matches the connected cameras?
-        # (e.g. a camera was unplugged or moved to another USB port)
         camera_warning = camera_setup.check_saved_order()
         if camera_warning:
             self.app.log_event(camera_warning, level=logging.WARNING)
         self.app.on_manual_capture = self._handle_manual_capture_request
 
-        # TEMP door test - only the real sensor has simulate_toggle
-        # (on Windows the mock's Enter key does the same job)
+        # TEMP door test - only the real sensor has simulate_toggle(on Windows the mock's Enter key does the same job)
         if config.DOOR_TEST_BUTTON and hasattr(self.sensor, "simulate_toggle"):
             self.app.on_simulate_door = self._simulate_door
 
@@ -122,8 +109,7 @@ class flow_controll:
     # --- Door events ----------------------------------------------------------
 
     def _on_door_change(self, is_open: bool) -> None:
-        # Same state as last time = no real change (e.g. a repeated sensor
-        # event) - ignore it, otherwise we'd scan/capture twice
+        # Same state as last time = no real change (e.g. a repeated sensor event) - ignore it
         if is_open == self._door_open:
             return
         self._door_open = is_open
@@ -134,12 +120,8 @@ class flow_controll:
             self._handle_door_closed()
 
     def _handle_door_closed(self) -> None:
-        """Door closed -> check with the ribbon cam which tray (if any) is
-        at the front now. Also happens once at program start, since the
-        sensor reports its initial state."""
+        """Door closed -> check with the ribbon cam which tray (if any) is at the front now. Also happens once at program start, since the sensor reports its initial state."""
         if self._scan_running:
-            # A scan is still running from the previous close - its result
-            # might be outdated by now, so look again once it's finished
             self._rescan_requested = True
             return
         self._start_qr_scan()
@@ -149,26 +131,21 @@ class flow_controll:
         if self.current_tray_number is None:
             if not self._scan_running:
                 self.app.log_event("Door opened - no tray at the front, no photos")
-            # If a scan is still running, _on_qr_scan_done catches up on
-            # the photos as soon as it finds a tray
+            # If a scan is still running, _on_qr_scan_done catches up on the photos as soon as it finds a tray
             return
         self._start_capture(self.current_tray_number)
 
     # --- QR scan (ribbon cam) -------------------------------------------------
 
     def _start_qr_scan(self) -> None:
-        # Forget the previous tray FIRST: after a door close, only what the
-        # camera sees NOW counts. Keeping the old number would make the next
-        # "tray moves out" door opening take photos under the wrong tray.
+        # Forget the previous tray FIRST: after a door close, only what the camera sees counts.
         self.current_tray_number = None
         self._scan_running = True
         self._update_status()
         threading.Thread(target=self._qr_scan_worker, daemon=True).start()
 
     def _qr_scan_worker(self) -> None:
-        """Runs in a background thread. ALWAYS reports back to the Tk
-        main thread - even if the scan crashes - otherwise _scan_running
-        would stay True forever."""
+        """Runs in a background thread. ALWAYS reports back to the Tk main thread - even if the scan crashes - otherwise _scan_running would stay True forever."""
         qr_result = None
         error_message = None
         try:
@@ -189,8 +166,7 @@ class flow_controll:
             # Normal case, e.g. after a tray went back in - not an error anymore
             self.app.log_event("No QR code visible - no tray at the front")
         else:
-            # QR content comes from outside - only accept valid tray
-            # numbers, normalized ("01" -> "1")
+            # QR content comes from outside - only accept valid tray numbers, normalized ("01" -> "1")
             tray_number = inventory.normalize_tray_number(qr_result.data)
             if tray_number is None:
                 self.app.log_event(
@@ -201,8 +177,7 @@ class flow_controll:
                 self.current_tray_number = tray_number
                 self.app.log_event(f"Tray {tray_number} detected at the front")
 
-        # Door closed again (after opening) while we were scanning: this
-        # result may already be outdated - look again
+        # Door closed again (after opening) while we were scanning: this result may already be outdated - look again
         if self._rescan_requested:
             self._rescan_requested = False
             if self._door_open is False:
@@ -211,8 +186,7 @@ class flow_controll:
 
         self._update_status()
 
-        # Door opened while the scan was still running (e.g. quickly after
-        # closing): the photos were skipped back then - take them now
+        # Door opened while the scan was still running: the photos were skipped back then -> take them now
         if self._door_open and self.current_tray_number is not None:
             self.app.log_event("Door opened during QR scan - taking photos now")
             self._start_capture(self.current_tray_number)
@@ -221,8 +195,7 @@ class flow_controll:
 
     def _start_capture(self, tray_number: str) -> None:
         if self._capture_running:
-            # e.g. false trigger photo still running, and the door opens
-            # again for real - that one must not get lost, it's the final one
+            # e.g. false trigger photo still running, and the door opens again for real -> that one must not get lost, it's the final one
             self._capture_pending = True
             self.app.log_event("Capture already running - another one follows right after")
             return
@@ -232,8 +205,7 @@ class flow_controll:
         threading.Thread(target=self._capture_worker, args=(tray_number,), daemon=True).start()
 
     def _run_capture_safely(self, tray_number: str):
-        """Wraps capture_and_stitch so it ALWAYS returns a StitchResult,
-        even if something inside crashes (cv2.error, disk full, ...).
+        """Wraps capture_and_stitch so it ALWAYS returns a StitchResult, even if something inside crashes.
         Used by both the automatic and the manual capture."""
         try:
             return camera_stitching.capture_and_stitch(
@@ -254,15 +226,14 @@ class flow_controll:
 
         if result.success:
             self.app.log_event(f"Capture saved for tray {tray_number}: {result.panorama_path.name}")
-            # Only this tray's row (+ its preview, if selected) gets refreshed
+            # Only this tray's row  gets refreshed
             self.app.update_tray_row(int(tray_number))
         else:
             self.app.log_event(f"Error: {result.error_message}", level=logging.ERROR)
 
         if self._capture_pending:
             self._capture_pending = False
-            # Only if a tray is still known - if the door closed in between
-            # and the scan found nothing, there's nothing to photograph
+            # Only if a tray is still known - if the door closed in between and the scan found nothing, there's nothing to photograph
             if self.current_tray_number is not None:
                 self._start_capture(self.current_tray_number)
                 return
@@ -272,8 +243,7 @@ class flow_controll:
     # --- Manual capture -------------------------------------------------------
 
     def _handle_manual_capture_request(self, tray_number: str) -> None:
-        """Triggered from the GUI's manual-capture button. Allowed any time,
-        except while another capture (automatic or manual) is running."""
+        """Triggered from the GUI's manual-capture button. Allowed any time, except while another capture (automatic or manual) is running."""
         if self._capture_running:
             self.app.log_event("Manual capture rejected - a capture is already running", level=logging.WARNING)
             return
@@ -289,10 +259,8 @@ class flow_controll:
 
 
 def _set_windows_app_id() -> None:
-    """Windows groups taskbar icons by an "AppUserModelID". Without its
-    own ID, the program counts as python.exe and the taskbar shows the
-    Python icon - no matter what iconphoto() sets. Must be called BEFORE
-    the first Tk window is created. Does nothing on Linux."""
+    """Windows groups taskbar icons by an "AppUserModelID". Without its own ID, the program counts as python.exe and the taskbar shows the
+    Python icon. Must be called BEFORE the first Tk window is created. Does nothing on Linux."""
     if not sys.platform.startswith("win32"):
         return
     try:

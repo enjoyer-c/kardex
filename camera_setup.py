@@ -7,8 +7,10 @@ import json
 
 import config
 import camera_stitching
-# Re-exported, so the GUI can catch it without importing camera_stitching
+# Re-exported, so the GUI can use them without importing camera_stitching
 CamerasBusyError = camera_stitching.CamerasBusyError
+get_panorama_mode = camera_stitching.get_panorama_mode
+set_panorama_mode = camera_stitching.set_panorama_mode
 
 
 def _connected_camera_paths() -> list[str]:

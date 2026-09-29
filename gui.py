@@ -81,6 +81,7 @@ class App:
         self._camera_setup_photos: dict[str, ImageTk.PhotoImage] = {}
         self._camera_setup_slots_frame: Optional[ttk.Frame] = None
         self._camera_setup_status_var: Optional[tk.StringVar] = None
+        self._panorama_mode_var: Optional[tk.StringVar] = None
         self._camera_setup_refresh_button: Optional[ttk.Button] = None
         self._camera_setup_save_button: Optional[ttk.Button] = None
         self._camera_discovery_running = False
@@ -353,6 +354,20 @@ class App:
             command=self._launch_ribbon_cam_preview,
         ).pack(side="left", padx=(25, 0))
 
+        # Picture mode: how the camera images are combined. Applies from the next capture on, saved immediately (no "Save Order" needed).
+        mode_frame = ttk.Frame(self._camera_setup_window)
+        mode_frame.pack(anchor="w", padx=15, pady=(0, 10))
+        ttk.Label(mode_frame, text="Picture mode:", font=("Arial", 10, "bold")).pack(side="left", padx=(0, 10))
+        self._panorama_mode_var = tk.StringVar(value=camera_setup.get_panorama_mode())
+        ttk.Radiobutton(
+            mode_frame, text="Stitch (panorama)", value="stitch",
+            variable=self._panorama_mode_var, command=self._on_panorama_mode_changed,
+        ).pack(side="left", padx=(0, 10))
+        ttk.Radiobutton(
+            mode_frame, text="Side by side", value="side_by_side",
+            variable=self._panorama_mode_var, command=self._on_panorama_mode_changed,
+        ).pack(side="left")
+
         self._camera_setup_status_var = tk.StringVar(value="")
         ttk.Label(
             self._camera_setup_window, textvariable=self._camera_setup_status_var, font=("Arial", 10, "italic")
@@ -371,12 +386,28 @@ class App:
         else:
             self._start_camera_discovery()
 
+    def _on_panorama_mode_changed(self) -> None:
+        """Radio button clicked -> save the new picture mode right away."""
+        mode = self._panorama_mode_var.get()
+        try:
+            camera_setup.set_panorama_mode(mode)
+        except (ValueError, OSError) as exc:
+            # Not saved -> show the mode that's actually active again
+            self._panorama_mode_var.set(camera_setup.get_panorama_mode())
+            self.log_event(f"Picture mode could not be changed: {exc}", level=logging.ERROR)
+            messagebox.showerror("Camera Setup", f"Picture mode could not be saved:\n\n{exc}", parent=self._camera_setup_window)
+            return
+
+        mode_text = "stitch (panorama)" if mode == "stitch" else "side by side"
+        self.log_event(f"Picture mode changed to: {mode_text}")
+
     def _close_camera_setup_window(self) -> None:
         if self._camera_setup_window is not None and self._camera_setup_window.winfo_exists():
             self._camera_setup_window.destroy()
         self._camera_setup_window = None
         self._camera_setup_slots_frame = None
         self._camera_setup_status_var = None
+        self._panorama_mode_var = None
         self._camera_setup_refresh_button = None
         self._camera_setup_save_button = None
         self.tray_table.focus_set()

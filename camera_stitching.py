@@ -4,6 +4,7 @@ Handles the USB cameras and panorama stitching. Cameras are opened, warmed up, r
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+import json
 import threading
 import cv2
 from datetime import datetime
@@ -18,6 +19,43 @@ class StitchResult:
     error_message: str | None = None
 
 _capture_lock = threading.Lock()
+
+PANORAMA_MODES = ("stitch", "side_by_side")
+
+
+def get_panorama_mode() -> str:
+    """Current picture mode: the one chosen in the Camera Setup window (saved in SETTINGS_FILE),
+    or config.PANORAMA_MODE if nothing was saved yet or the file is unreadable.
+    Read fresh on every capture, so a change in the GUI applies to the very next capture."""
+    try:
+        with open(config.SETTINGS_FILE, "r", encoding="utf-8") as f:
+            mode = json.load(f).get("panorama_mode")
+        if mode in PANORAMA_MODES:
+            return mode
+    except (OSError, json.JSONDecodeError, AttributeError):
+        pass
+    return config.PANORAMA_MODE
+
+
+def set_panorama_mode(mode: str) -> None:
+    """Saves the picture mode chosen in the Camera Setup window. Raises ValueError for an unknown mode, OSError if the file can't be written.
+    Other keys in the settings file are kept."""
+    if mode not in PANORAMA_MODES:
+        raise ValueError(f"Unknown picture mode: '{mode}'")
+
+    settings = {}
+    try:
+        with open(config.SETTINGS_FILE, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+        if isinstance(loaded, dict):
+            settings = loaded
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    settings["panorama_mode"] = mode
+    config.SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(config.SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=2)
 
 
 class CamerasBusyError(RuntimeError):
@@ -135,17 +173,18 @@ def _capture_and_stitch_locked(camera_devices: list[str], tray_number: str) -> S
     output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime(config.TIMESTAMP_FORMAT)
 
-    if config.PANORAMA_MODE == "stitch":
+    panorama_mode = get_panorama_mode()
+    if panorama_mode == "stitch":
         stitcher = cv2.Stitcher_create(config.STITCHER_MODE)
         stitcher.setPanoConfidenceThresh(config.STICHER_CONFIDENCE_THRESHOLD)
         status, panorama = stitcher.stitch(frames)
 
         if status != cv2.Stitcher_OK:
             return StitchResult(success=False, error_message=f"Stitching failed, status code: {status}")
-    elif config.PANORAMA_MODE == "side_by_side":
+    elif panorama_mode == "side_by_side":
         panorama = _side_by_side(frames)
     else:
-        return StitchResult(success=False, error_message=f"Unknown PANORAMA_MODE in config: '{config.PANORAMA_MODE}'")
+        return StitchResult(success=False, error_message=f"Unknown PANORAMA_MODE in config: '{panorama_mode}'")
 
     pano_path = output_dir / f"finalFrame_{timestamp}.jpg"
 

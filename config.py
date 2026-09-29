@@ -25,6 +25,9 @@ else:
 # Saved left-to-right camera order. Loading it lives in camera_setup.py - see camera_setup.get_camera_devices()
 CAMERA_ORDER_FILE = BASE_DIR / "camera_order.json"
 
+# Settings changed via the GUI (currently: picture mode stitch / side by side)
+SETTINGS_FILE = BASE_DIR / "settings.json"
+
 USB_CAMERA_FOURCC = "MJPG"
 USB_CAMERA_RESOLUTION = (1280, 720)
 USB_CAMERA_WARMUP_FRAMES = 15
@@ -33,6 +36,8 @@ USB_CAMERA_WARMUP_FRAMES = 15
 # How the single camera images are combined into one picture:
 #   "stitch"       - OpenCV stitcher (removes overlaps, can fail on low-texture images, e.g. an empty tray)
 #   "side_by_side" - images simply placed next to each other in camera order (never fails, fast)
+# Can be switched in the Camera Setup window - the choice is saved in SETTINGS_FILE.
+# This value is only the default, used until a choice has been saved there.
 PANORAMA_MODE = "stitch"
 
 STITCHER_MODE = cv2.Stitcher_SCANS      #vaible modes: SCANS or PANORAMA
@@ -42,7 +47,7 @@ MAX_IMAGES_PER_TRAY = 3
 
 # --- QR-Code-Cam -----------------------------------------------------------
 QR_CAPTURE_SIZE = (1332, 990)   
-QR_SCAN_TIMEOUT_S = 6.0                 # max waiting time for QR-Code [s]
+QR_SCAN_TIMEOUT_S = 6.0                 # max waiting time for QR-Code [s] - tray is already standing when the door closes
 QR_SCAN_INTERVAL_S = 0.1                # pause between two scan attempts [s]
 
 # --- Hall-Sensor -----------------------------------------------------------

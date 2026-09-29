@@ -73,6 +73,19 @@ class flow_controll:
         sensor_error = getattr(self.sensor, "error_message", None)
         if sensor_error:
             self.app.log_event(sensor_error, level=logging.ERROR)
+            self.app.set_error("sensor", "Door sensor not available - no automatic photos")
+
+        # Ribbon cam usable at all? Without picamera2 every scan finds "nothing" -> no tray is ever detected.
+        # getattr: the Windows mock doesn't have this attribute
+        if not getattr(qr_code_scanner, "HAS_PICAMERA", True):
+            self.app.log_event("Ribbon cam not available - picamera2 is not installed. Trays can't be detected!", level=logging.ERROR)
+            self.app.set_error("ribbon_missing", "Ribbon cam (QR) not available")
+
+        # Any USB cameras connected at all?
+        camera_error = camera_setup.check_cameras_connected()
+        if camera_error:
+            self.app.log_event(camera_error, level=logging.ERROR)
+            self.app.set_error("usb_cameras", camera_error)
 
         # Saved USB camera order still matches the connected cameras?
         camera_warning = camera_setup.check_saved_order()
@@ -174,6 +187,12 @@ class flow_controll:
     def _on_qr_scan_done(self, qr_result, error_message: str | None = None) -> None:
         self._scan_running = False
 
+        # Red banner while the ribbon cam keeps failing - disappears with the next scan that works again
+        if error_message is not None:
+            self.app.set_error("ribbon_scan", "QR scan failed - see History")
+        else:
+            self.app.clear_error("ribbon_scan")
+
         if error_message is not None:
             self.app.log_event(f"Error: {error_message}", level=logging.ERROR)
         elif qr_result is None:
@@ -237,6 +256,12 @@ class flow_controll:
 
     def _on_capture_done(self, result, tray_number: str) -> None:
         self._capture_running = False
+
+        # Red banner after a failed capture (a photo is missing!) - disappears with the next successful capture
+        if result.success:
+            self.app.clear_error("capture")
+        else:
+            self.app.set_error("capture", f"Last capture failed (tray {tray_number}) - see History")
 
         if result.success:
             self.app.log_event(f"Capture saved for tray {tray_number}: {result.panorama_path.name}")

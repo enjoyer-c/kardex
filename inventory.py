@@ -4,6 +4,7 @@ Reads and writes the plain-text inventory list (Inventory.txt). One line per tra
  
 from __future__ import annotations
 
+import logging
 import os
 
 import config
@@ -15,7 +16,7 @@ def read_all() -> list[str]:
         with open(config.INVENTORY_FILE, "r", encoding="utf-8") as f:
             return [line.rstrip("\n") for line in f]
     except FileNotFoundError:
-        print(f"[inventory] {config.INVENTORY_FILE} not found.")
+        logging.error("Inventory file not found: %s - tray table stays empty", config.INVENTORY_FILE)
         return []
  
  

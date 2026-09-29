@@ -5,6 +5,7 @@ Captures images via picamera2 and decodes QR codes with pyzbar.
 
 from dataclasses import dataclass
 from typing import Optional
+import logging
 import time
 import cv2
 from pyzbar.pyzbar import decode
@@ -50,7 +51,7 @@ def scan_frame(frame) -> Optional[QRResult]:
 def wait_for_qr(timeout_s: float = config.QR_SCAN_TIMEOUT_S) -> Optional[QRResult]:
     """Repeatedly captures frames and tries to decode a QR code, until either one is found or the timeout is reached (QR_SCAN_TIMEOUT_S)."""
     if not HAS_PICAMERA:
-        print("[qr_code_scanner] picamera2 not available - cannot scan.")
+        logging.error("picamera2 not available - QR scan not possible, trays can't be detected")
         return None
  
     picam = _init_camera()

@@ -4,6 +4,7 @@ Camera setup helper: lets the user identify connected USB cameras via a live sna
 
 from pathlib import Path
 import json
+import sys
 
 import config
 import camera_stitching
@@ -61,6 +62,16 @@ def discover_cameras(max_cameras: int = 4) -> dict[str, "cv2.typing.MatLike"]:
                 break
 
     return found
+
+
+def check_cameras_connected() -> str | None:
+    """Startup check: is at least one USB camera connected? Returns an error text if not, otherwise None.
+    Only on Linux - on Windows the mock modules are used and /dev/v4l doesn't exist."""
+    if not sys.platform.startswith("linux"):
+        return None
+    if not _connected_camera_paths():
+        return "No USB cameras found"
+    return None
 
 
 def check_saved_order() -> str | None:

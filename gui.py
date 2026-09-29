@@ -67,6 +67,7 @@ class App:
         self.root.geometry("1920x1080")
 
         self._log_entries: list[str] = []
+        self._errors: dict[str, str] = {}   # persistent problems shown in the red banner (key -> short text)
         self._history_window: Optional[tk.Toplevel] = None
         self._history_listbox: Optional[tk.Listbox] = None
         self._manual_capture_window: Optional[tk.Toplevel] = None
@@ -145,6 +146,15 @@ class App:
         bg, fg = STATUS_COLORS["NO_TRAY"]
         self.status_label.configure(bg=bg, fg=fg)
 
+        # Red error banner between the status and the buttons (column 2, over both rows).
+        # Hidden (grid_remove) as long as there's no persistent problem - see set_error / clear_error.
+        self.error_label = tk.Label(
+            top_frame, text="", font=("Arial", 13, "bold"),
+            bg="#c62828", fg="white", padx=15, pady=8, justify="left", wraplength=380,
+        )
+        self.error_label.grid(row=0, column=2, rowspan=2)
+        self.error_label.grid_remove()
+
         style = ttk.Style()
         style.configure("Big.TButton", font=("Arial", 13), padding=(12, 8))
 
@@ -201,6 +211,26 @@ class App:
         self.status_text.set(text)
         bg, fg = STATUS_COLORS.get(state_name, ("#eeeeee", "#333333"))
         self.status_label.configure(bg=bg, fg=fg)
+
+    # --- Error banner -----------------------------------------------------------
+
+    def set_error(self, key: str, text: str) -> None:
+        """Shows a persistent problem in the red banner (e.g. door sensor missing). The key identifies the problem,
+        so it can be removed again with clear_error(key) once it's solved. Several problems are shown line by line.
+        Only for problems the user must notice - details belong in the History."""
+        self._errors[key] = text
+        self._refresh_error_banner()
+
+    def clear_error(self, key: str) -> None:
+        if self._errors.pop(key, None) is not None:
+            self._refresh_error_banner()
+
+    def _refresh_error_banner(self) -> None:
+        if self._errors:
+            self.error_label.configure(text="\n".join(f"\u26a0 {text}" for text in self._errors.values()))
+            self.error_label.grid()   # grid() without options restores the position from above
+        else:
+            self.error_label.grid_remove()
 
     def _handle_search_change(self, event=None) -> None:
         # Debounce: don't rebuild the table on every single keystroke, only 300ms after the user last typed
@@ -477,8 +507,11 @@ class App:
 
         if found:
             self._camera_setup_status_var.set(f"{len(found)} camera(s) found.")
+            self.clear_error("usb_cameras")   # e.g. camera plugged in after startup
         else:
             self._camera_setup_status_var.set("No cameras found.")
+            if sys.platform.startswith("linux"):   # on Windows the search can't find cameras anyway
+                self.set_error("usb_cameras", "No USB cameras found")
         self._update_camera_setup_buttons()
 
     @staticmethod

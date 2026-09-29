@@ -1,5 +1,5 @@
 """
-Hall sensor module for detecting whether the door of the kardex shuttle is open or closed.
+Door sensor module for detecting whether the door of the kardex shuttle is open or closed.
 Calls the optional on_change callback with a bool (True = open) on every state change.
 """
 
@@ -15,7 +15,7 @@ except (ImportError, ModuleNotFoundError):
     IS_RPI = False
 
 
-class HallSensor:
+class DoorSensor:
     def __init__(self, on_change: Optional[Callable[[bool], None]] = None):
         self._on_change = on_change
         self._is_open = False
@@ -25,20 +25,20 @@ class HallSensor:
  
         if not IS_RPI:
             self.error_message = (
-                "Hall sensor NOT available - gpiozero is not installed. "
+                "Door sensor NOT available - gpiozero is not installed. "
                 "Door detection is disabled!"
             )
             return
 
         try:
             self._button = Button(
-                config.HALL_SENSOR_GPIO,
+                config.DOOR_SENSOR_GPIO,
                 pull_up=True,
-                bounce_time=config.HALL_SENSOR_BOUNCE_TIME_MS / 1000.0,
+                bounce_time=config.DOOR_SENSOR_BOUNCE_TIME_MS / 1000.0,
             )
         except Exception as exc:
             self.error_message = (
-                f"Hall sensor NOT available - GPIO {config.HALL_SENSOR_GPIO} "
+                f"Door sensor NOT available - GPIO {config.DOOR_SENSOR_GPIO} "
                 f"could not be set up ({exc}). Door detection is disabled!"
             )
             return

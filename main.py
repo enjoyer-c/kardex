@@ -14,11 +14,11 @@ import inventory
 import camera_setup
 
 if sys.platform.startswith("win32"):
-    import hall_sensor_mock as hall_sensor
+    import door_sensor_mock as door_sensor
     import qr_code_scanner_mock as qr_code_scanner
     import camera_stitching_mock as camera_stitching
 else:
-    import hall_sensor
+    import door_sensor
     import qr_code_scanner
     import camera_stitching
 
@@ -65,11 +65,11 @@ class flow_controll:
         self._capture_running = False    # automatic OR manual capture in progress
         self._capture_pending = False    # door opened again while a capture was running
 
-        self.sensor = hall_sensor.HallSensor(
+        self.sensor = door_sensor.DoorSensor(
             on_change=lambda is_open: self.app.root.after(0, self._on_door_change, is_open)
         )
 
-        # If the hall sensor couldn't be set up, show it in the History; otherwise nobody notices that door detection isn't working.
+        # If the door sensor couldn't be set up, show it in the History; otherwise nobody notices that door detection isn't working.
         sensor_error = getattr(self.sensor, "error_message", None)
         if sensor_error:
             self.app.log_event(sensor_error, level=logging.ERROR)

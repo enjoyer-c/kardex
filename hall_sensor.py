@@ -21,8 +21,6 @@ class HallSensor:
         self._is_open = False
 
         # None = sensor set up fine. Otherwise holds a readable error
-        # message - main.py shows it in the History, so a missing sensor
-        # doesn't go unnoticed (without it, the door flow never starts)
         self.error_message: Optional[str] = None
  
         if not IS_RPI:
@@ -39,8 +37,6 @@ class HallSensor:
                 bounce_time=config.HALL_SENSOR_BOUNCE_TIME_MS / 1000.0,
             )
         except Exception as exc:
-            # e.g. GPIO already in use by another program, or no GPIO
-            # access - previously this crashed the whole program on startup
             self.error_message = (
                 f"Hall sensor NOT available - GPIO {config.HALL_SENSOR_GPIO} "
                 f"could not be set up ({exc}). Door detection is disabled!"

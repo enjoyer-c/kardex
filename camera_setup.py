@@ -1,8 +1,5 @@
 """
-Camera setup helper: lets the user identify connected USB cameras via
-a live snapshot and assign left/right order - needed because plain
-USB port order isn't stable if the cameras ever get unplugged/swapped,
-and by-id device names alone don't say which physical camera is which
+Camera setup helper: lets the user identify connected USB cameras via a live snapshot and assign left/right
 """
 
 from pathlib import Path
@@ -15,16 +12,8 @@ CamerasBusyError = camera_stitching.CamerasBusyError
 
 
 def _connected_camera_paths() -> list[str]:
-    """by-path device paths of all connected USB video devices (only
-    video-index0, duplicates removed). Does NOT open any camera - just
-    looks at /dev/v4l/by-path, so it's instant. Empty list on systems
-    without /dev/v4l/by-path (e.g. Windows).
-
-    Uses by-path (not by-id): identical camera models (e.g. two
-    Logitech C920s) often report the same or an empty serial number,
-    which makes udev's by-id names collide - by-path is keyed to the
-    physical USB port instead, so it stays unique even for identical
-    camera models.
+    """by-path device paths of all connected USB video devices (only video-index0, duplicates removed). Does NOT open any camera. 
+    Uses by-path (not by-id): identical camera models often report the same or an empty serial number, by-path is keyed to the physical USB port instead, so it stays unique even for identical camera models.
     """
     by_path_dir = Path("/dev/v4l/by-path")
     if not by_path_dir.exists():
@@ -37,30 +26,24 @@ def _connected_camera_paths() -> list[str]:
             continue
         target = str(p.resolve())
         if target in seen_targets:
-            continue  # just another name for a device we already have
+            continue
         seen_targets.add(target)
         paths.append(str(p))
     return paths
 
 
 def get_camera_devices() -> list[str]:
-    """The camera devices to capture with, in left-to-right order: the
-    order saved via Camera Setup, or - if none has been saved yet - all
-    connected cameras in by-path order as a fallback.
-    Read fresh on every call (cheap: one small JSON file), so a newly
-    saved order is used right away without any restart."""
+    """The camera devices to capture with, in left-to-right order: the order saved via Camera Setup, or all connected cameras in by-path order as a fallback.
+    Read fresh on every call, so a newly saved order is used right away without any restart."""
     return load_camera_order() or _connected_camera_paths()
 
 
 def discover_cameras(max_cameras: int = 4) -> dict[str, "cv2.typing.MatLike"]:
-    """Returns {device path: preview frame} for all unique, actually-usable
-    connected USB cameras, in discovery order. The frame from the
-    functional test doubles as the preview image, so every camera only
-    has to be opened (and warmed up) ONCE.
+    """Returns {device path: preview frame} for all unique, actually-usable connected USB cameras, in discovery order. 
+    The frame from the functional test doubles as the preview image, so every camera only has to be opened (and warmed up) once.
 
-    Holds the camera lock for the whole search - raises CamerasBusyError
-    if a capture is currently running. Blocks for several seconds (warmup
-    frames per camera) - call it from a background thread, not from Tk.
+    Holds the camera lock for the whole search -> raises CamerasBusyError if a capture is currently running. 
+    Blocks for several seconds (warmup frames per camera).
     """
     found: dict[str, "cv2.typing.MatLike"] = {}
 
@@ -68,7 +51,7 @@ def discover_cameras(max_cameras: int = 4) -> dict[str, "cv2.typing.MatLike"]:
         for candidate in _connected_camera_paths():
             success, frame, _error = camera_stitching.capture_one(candidate)
             if not success:
-                continue  # opens but can't actually deliver a frame (e.g. secondary interface)
+                continue
 
             found[candidate] = frame
 
@@ -79,14 +62,10 @@ def discover_cameras(max_cameras: int = 4) -> dict[str, "cv2.typing.MatLike"]:
 
 
 def check_saved_order() -> str | None:
-    """Compares the saved camera order (camera_order.json) with the
-    cameras that are connected right now. Returns a warning text if
-    they don't match (camera missing / new camera / nothing saved yet),
-    or None if everything fits.
+    """Compares the saved camera order (camera_order.json) with the cameras that are connected right now. 
+    Returns a warning text if they don't match, or None if everything fits.
 
-    Only looks at the /dev/v4l/by-path entries - does NOT open any
-    camera, so it's fast enough to run at every program start.
-    Does nothing on systems without /dev/v4l/by-path (e.g. Windows).
+    Only looks at the /dev/v4l/by-path entries. Does nothing on systems without /dev/v4l/by-path (e.g. Windows).
     """
     if not Path("/dev/v4l/by-path").exists():
         return None
@@ -110,15 +89,13 @@ def check_saved_order() -> str | None:
 
 
 def short_name(device: str) -> str:
-    """Shortens a by-path device path down to just the last, most
-    distinguishing segment, for display purposes."""
+    """Shortens a by-path device path down to just the last, most distinguishing segment, for display purposes."""
     name = Path(device).name
     return name.replace("-video-index0", "")
 
 
 def load_camera_order() -> list[str]:
-    """Returns the saved camera order, or an empty list if none has
-    been saved yet."""
+    """Returns the saved camera order, or an empty list if none has been saved yet."""
     if not config.CAMERA_ORDER_FILE.exists():
         return []
     try:

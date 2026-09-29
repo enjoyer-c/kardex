@@ -534,11 +534,23 @@ class App:
 
         messagebox.showinfo(
             "Camera Setup",
-            "Opens in a separate window. Press 'q' in that window when done.\n"
-            "Don't run this while a tray is currently being captured.",
+            "Opens in a separate window. Close it with 'q' or the X.\n\n"
+            "While the preview is open, the ribbon cam can't scan QR codes - "
+            "it is closed automatically as soon as the next QR scan starts (door closes).",
             parent=self._camera_setup_window,
         )
         self._ribbon_cam_process = subprocess.Popen([sys.executable, str(script_path)])
+
+    def close_ribbon_cam_preview(self) -> Optional[subprocess.Popen]:
+        """Called from main.py before every QR scan: the preview and the scan need the same camera.
+        Only SENDS the stop signal (doesn't wait, so the GUI never freezes) and returns the process,
+        so the scan thread can wait for it to really end. Returns None if no preview is running."""
+        process = self._ribbon_cam_process
+        if process is None or process.poll() is not None:
+            return None
+        process.terminate()
+        self._ribbon_cam_process = None
+        return process
 
     # --- History (separate pop-up window) --------------------------------
 

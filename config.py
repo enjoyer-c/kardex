@@ -1,9 +1,7 @@
 """
 Central configuration for the Kardex project.
-Platform-aware (Windows dev machine vs. Raspberry Pi), so the same
-file works unchanged on both without manual edits.
+Platform-aware (Windows dev machine vs. Raspberry Pi), so the same file works unchanged on both without manual edits.
 """
-
 
 from pathlib import Path
 import cv2
@@ -24,9 +22,7 @@ else:
     CAP_BACKEND = cv2.CAP_ANY
 
 # --- USB-Cams ---------------------------------------------------------------
-# Saved left-to-right camera order (written by the Camera Setup window).
-# Loading it (plus the fallback discovery) lives in camera_setup.py -
-# see camera_setup.get_camera_devices()
+# Saved left-to-right camera order. Loading it lives in camera_setup.py - see camera_setup.get_camera_devices()
 CAMERA_ORDER_FILE = BASE_DIR / "camera_order.json"
 
 USB_CAMERA_FOURCC = "MJPG"
@@ -34,6 +30,11 @@ USB_CAMERA_RESOLUTION = (1280, 720)
 USB_CAMERA_WARMUP_FRAMES = 15
 
 # --- Stitching -------------------------------------------------------------
+# How the single camera images are combined into one picture:
+#   "stitch"       - OpenCV stitcher (removes overlaps, can fail on low-texture images, e.g. an empty tray)
+#   "side_by_side" - images simply placed next to each other in camera order (never fails, fast)
+PANORAMA_MODE = "stitch"
+
 STITCHER_MODE = cv2.Stitcher_SCANS      #vaible modes: SCANS or PANORAMA
 STICHER_CONFIDENCE_THRESHOLD = 0.5      #Default = 1.0
 
@@ -41,7 +42,7 @@ MAX_IMAGES_PER_TRAY = 3
 
 # --- QR-Code-Cam -----------------------------------------------------------
 QR_CAPTURE_SIZE = (1332, 990)   
-QR_SCAN_TIMEOUT_S = 10.0                # max waiting time for QR-Code [s]
+QR_SCAN_TIMEOUT_S = 6.0                 # max waiting time for QR-Code [s]
 QR_SCAN_INTERVAL_S = 0.1                # pause between two scan attempts [s]
 
 # --- Hall-Sensor -----------------------------------------------------------

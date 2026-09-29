@@ -1,8 +1,7 @@
 """
 Mock hall sensor for Windows testing.
 Simulates the magnetic door sensor via keyboard input instead of GPIO.
-Press Enter in the console to toggle between "door open" and "door
-closed"
+Press Enter in the console to toggle between "door open" and "door closed"
 """
 
 from typing import Callable, Optional

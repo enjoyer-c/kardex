@@ -1,8 +1,6 @@
 """
 Mock camera_stitching for Windows testing.
-Tries to use real webcams. If a camera isn't available, a synthetic placeholder 
-frame is generated instead, so the rest of the pipeline (stitching, saving, tray folders) 
-can still be exercised without any real camera hardware attached.
+Tries to use real webcams. If a camera isn't available, a synthetic placeholder frame is generated instead.
 """
 
 from dataclasses import dataclass
@@ -39,8 +37,7 @@ def enforce_max_images(output_dir: Path, max_images: int) -> None:
 
 
 def _capture_real(index: int):
-    """Tries to grab one frame from a real webcam. Returns None if the
-    camera isn't available or doesn't deliver a frame."""
+    """Tries to grab one frame from a real webcam. Returns None if the camera isn't available or doesn't deliver a frame."""
     cam = cv2.VideoCapture(index, cv2.CAP_DSHOW)
     try:
         if not cam.isOpened():
@@ -54,8 +51,7 @@ def _capture_real(index: int):
 
 
 def _synthetic_frame(label: str):
-    """Generates a plain placeholder image with a text label, used
-    whenever no real camera is available at a given index."""
+    """Generates a plain placeholder image with a text label, used whenever no real camera is available at a given index."""
     frame = np.zeros((480, 640, 3), dtype=np.uint8)
     frame[:] = (60, 60, 60)
     cv2.putText(frame, label, (40, 240), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 2)

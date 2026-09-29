@@ -4,6 +4,7 @@ from enum import Enum, auto
 import logging
 import sys
 import logging.handlers
+import subprocess
 import threading
 import traceback
 
@@ -142,13 +143,26 @@ class flow_controll:
         self.current_tray_number = None
         self._scan_running = True
         self._update_status()
-        threading.Thread(target=self._qr_scan_worker, daemon=True).start()
 
-    def _qr_scan_worker(self) -> None:
+        # The ribbon cam live preview (Camera Setup) blocks the camera -> close it first, otherwise the scan fails
+        preview_process = self.app.close_ribbon_cam_preview()
+        if preview_process is not None:
+            self.app.log_event("Ribbon cam preview closed automatically - camera needed for QR scan", level=logging.WARNING)
+
+        threading.Thread(target=self._qr_scan_worker, args=(preview_process,), daemon=True).start()
+
+    def _qr_scan_worker(self, preview_process: subprocess.Popen | None = None) -> None:
         """Runs in a background thread. ALWAYS reports back to the Tk main thread - even if the scan crashes - otherwise _scan_running would stay True forever."""
         qr_result = None
         error_message = None
         try:
+            if preview_process is not None:
+                # Wait until the preview has really released the camera (kill it if it doesn't react)
+                try:
+                    preview_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    preview_process.kill()
+                    preview_process.wait()
             qr_result = qr_code_scanner.wait_for_qr()
         except Exception as exc:
             # logging is thread-safe - writes the full traceback to the log file

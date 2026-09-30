@@ -37,7 +37,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
 
-from PIL import Image, ImageTk
+from PIL import Image, ImageDraw, ImageTk
 import cv2
 import subprocess
 import sys
@@ -58,6 +58,7 @@ STATUS_COLORS = {
 
 
 PREVIEW_DEBOUNCE_MS = 150 # Waiting time after search (arrow-keys) for loading the actual image
+LENS_UPDATE_MS = 20       # Magnifier redraws at most every 20 ms while the mouse moves (mouse events come much faster)
 
 
 class App:
@@ -75,6 +76,19 @@ class App:
         self._search_after_id: Optional[str] = None
         self._preview_after_id: Optional[str] = None
         self._preview_photo = None
+
+        # Image preview: the full-resolution image stays in memory - the preview is scaled from it
+        # to fit the pane, and the magnifier cuts its details out of it
+        self._preview_full: Optional[Image.Image] = None
+        self._preview_scale = 1.0                       # displayed size / original size
+        self._preview_origin: tuple[int, int] = (0, 0)  # top-left corner of the image on the canvas
+        self._preview_size: tuple[int, int] = (0, 0)    # displayed width/height
+        self._preview_resize_after_id: Optional[str] = None
+
+        # Magnifier (hold left mouse button on the preview)
+        self._lens_photo = None
+        self._lens_pos: Optional[tuple[int, int]] = None
+        self._lens_after_id: Optional[str] = None
 
         # Camera Setup popup state
         self._camera_setup_window: Optional[tk.Toplevel] = None
@@ -130,6 +144,10 @@ class App:
         ).pack(anchor="w")
         tk.Label(
             hint_frame, text="• Right-click: rename description",
+            font=("Arial", 10), fg="black", bg="white",
+        ).pack(anchor="w")
+        tk.Label(
+            hint_frame, text="• Hold left mouse button on the image: magnifier",
             font=("Arial", 10), fg="black", bg="white",
         ).pack(anchor="w")
 
@@ -869,8 +887,19 @@ class App:
         info_bar = ttk.Label(preview_frame, textvariable=self._preview_info_var, font=("Arial", 12, "bold"))
         info_bar.pack(pady=(5, 10))
 
-        self._preview_label = ttk.Label(preview_frame)
-        self._preview_label.pack(expand=True)
+        # Canvas instead of a Label: the image is scaled to the real size of the pane,
+        # and the magnifier can be drawn on top of it
+        bg_color = ttk.Style().lookup("TFrame", "background") or self.root.cget("bg")
+        self._preview_canvas = tk.Canvas(preview_frame, highlightthickness=0, bd=0, bg=bg_color)
+        self._preview_canvas.pack(fill="both", expand=True)
+        self._preview_canvas.bind("<Configure>", self._handle_preview_resize)
+        self._preview_canvas.bind("<ButtonPress-1>", self._handle_lens_press)
+        self._preview_canvas.bind("<B1-Motion>", self._handle_lens_motion)
+        self._preview_canvas.bind("<ButtonRelease-1>", self._handle_lens_release)
+
+        # Circle mask for the magnifier - built once, reused for every redraw
+        self._lens_mask = Image.new("L", (config.LENS_SIZE, config.LENS_SIZE), 0)
+        ImageDraw.Draw(self._lens_mask).ellipse((0, 0, config.LENS_SIZE - 1, config.LENS_SIZE - 1), fill=255)
 
     def _handle_global_arrow_key(self, event) -> Optional[str]:
         """Lets Up/Down move the table selection even when focus is
@@ -924,42 +953,140 @@ class App:
         self._load_preview_image(int(tray_number_str))
 
     def _clear_preview(self) -> None:
-        self._preview_photo = None
-        self._preview_label.configure(image="")
+        self._set_preview_image(None)
         self._preview_info_var.set("Select a tray to preview its last captured image.")
 
     def _load_preview_image(self, tray_number: int) -> None:
         image_path = self._latest_capture(tray_number)
 
         if image_path is None:
-            self._preview_photo = None
-            self._preview_label.configure(image="")
+            self._set_preview_image(None)
             self._preview_info_var.set(f"Tray {tray_number} - no captured image yet.")
             return
 
         try:
-            # "with" closes the file again afterwards (PhotoImage keeps
-            # its own copy of the pixels, so the file isn't needed anymore)
+            # "with" closes the file again afterwards - convert() creates a fully loaded copy.
+            # The FULL resolution is kept (no draft/thumbnail anymore): the preview is scaled
+            # from it to fit the pane, and the magnifier needs the original details.
             with Image.open(image_path) as pil_image:
-                # draft(): lets the JPEG decoder shrink the image WHILE
-                # decoding (by 1/2, 1/4 or 1/8) instead of decoding the full
-                # panorama first. thumbnail() then only does the remaining
-                # fine scaling. draft needs the REAL target size (same aspect
-                # ratio as the image) - with the plain (1400, 900) box it
-                # would never shrink a wide panorama, because its height is
-                # already below 900 after the first halving step.
-                scale = min(1400 / pil_image.width, 900 / pil_image.height, 1.0)
-                pil_image.draft("RGB", (int(pil_image.width * scale), int(pil_image.height * scale)))
-                pil_image.thumbnail((1400, 900))
-                self._preview_photo = ImageTk.PhotoImage(pil_image)
+                full_image = pil_image.convert("RGB")
         except Exception as exc:
-            self._preview_photo = None
-            self._preview_label.configure(image="")
+            self._set_preview_image(None)
             self._preview_info_var.set(f"Tray {tray_number} - could not load image ({exc}).")
             return
 
-        self._preview_label.configure(image=self._preview_photo)
+        self._set_preview_image(full_image)
         self._preview_info_var.set(self._format_capture_info(tray_number, image_path))
+
+    def _set_preview_image(self, full_image: Optional[Image.Image]) -> None:
+        """Shows a new image in the preview (None = empty preview)."""
+        self._hide_lens()
+        self._preview_full = full_image
+        self._render_preview()
+
+    def _handle_preview_resize(self, event=None) -> None:
+        # Debounce: while the window or the divider is being dragged, <Configure> fires constantly -
+        # only rescale once it has stopped for a moment
+        if self._preview_resize_after_id is not None:
+            self.root.after_cancel(self._preview_resize_after_id)
+        self._preview_resize_after_id = self.root.after(PREVIEW_DEBOUNCE_MS, self._render_preview)
+
+    def _render_preview(self) -> None:
+        """Scales the full image to the current size of the preview canvas (keeping the aspect
+        ratio, never larger than the original) and draws it centered."""
+        self._preview_resize_after_id = None
+        canvas = self._preview_canvas
+        canvas.delete("preview")
+        self._preview_photo = None
+
+        if self._preview_full is None:
+            return
+
+        canvas_w, canvas_h = canvas.winfo_width(), canvas.winfo_height()
+        if canvas_w < 10 or canvas_h < 10:
+            return  # canvas not laid out yet - <Configure> calls this again once it is
+
+        img_w, img_h = self._preview_full.size
+        scale = min(canvas_w / img_w, canvas_h / img_h, 1.0)
+        shown_w, shown_h = max(1, int(img_w * scale)), max(1, int(img_h * scale))
+
+        # reducing_gap: shrinks in a fast first step, then does the fine LANCZOS scaling
+        shown = self._preview_full.resize((shown_w, shown_h), Image.Resampling.LANCZOS, reducing_gap=3.0)
+        self._preview_photo = ImageTk.PhotoImage(shown)
+
+        x0, y0 = (canvas_w - shown_w) // 2, (canvas_h - shown_h) // 2
+        canvas.create_image(x0, y0, image=self._preview_photo, anchor="nw", tags="preview")
+        canvas.tag_raise("lens")
+
+        self._preview_scale = scale
+        self._preview_origin = (x0, y0)
+        self._preview_size = (shown_w, shown_h)
+
+    # --- Magnifier (hold left mouse button on the preview) -----------------------
+
+    def _handle_lens_press(self, event) -> None:
+        if self._preview_full is None:
+            return
+        self._preview_canvas.configure(cursor="none")  # the lens itself shows where the mouse is
+        self._lens_pos = (event.x, event.y)
+        self._draw_lens()
+
+    def _handle_lens_motion(self, event) -> None:
+        if self._lens_pos is None:
+            return
+        self._lens_pos = (event.x, event.y)
+        # Throttle: only schedule a redraw if none is pending
+        if self._lens_after_id is None:
+            self._lens_after_id = self.root.after(LENS_UPDATE_MS, self._draw_lens)
+
+    def _handle_lens_release(self, event=None) -> None:
+        self._hide_lens()
+
+    def _hide_lens(self) -> None:
+        if self._lens_after_id is not None:
+            self.root.after_cancel(self._lens_after_id)
+            self._lens_after_id = None
+        self._lens_pos = None
+        self._lens_photo = None
+        self._preview_canvas.delete("lens")
+        self._preview_canvas.configure(cursor="")
+
+    def _draw_lens(self) -> None:
+        """Draws the magnifier circle at the mouse position: cuts the matching area out of the
+        FULL-resolution image and enlarges it to LENS_SIZE."""
+        self._lens_after_id = None
+        canvas = self._preview_canvas
+        if self._lens_pos is None or self._preview_full is None or self._preview_photo is None:
+            return
+
+        x, y = self._lens_pos
+        x0, y0 = self._preview_origin
+        shown_w, shown_h = self._preview_size
+        canvas.delete("lens")
+        self._lens_photo = None
+
+        # Only over the image itself - outside of it there's nothing to magnify
+        if not (x0 <= x < x0 + shown_w and y0 <= y < y0 + shown_h):
+            return
+
+        size = config.LENS_SIZE
+        # Mouse position converted to the ORIGINAL image
+        orig_x = (x - x0) / self._preview_scale
+        orig_y = (y - y0) / self._preview_scale
+        # Half the width of the original area that fits into the lens at LENS_ZOOM x the preview size
+        half = size / (2 * config.LENS_ZOOM * self._preview_scale)
+
+        region = self._preview_full.crop(
+            (int(orig_x - half), int(orig_y - half), int(orig_x + half), int(orig_y + half))
+        )
+        region = region.resize((size, size), Image.Resampling.BILINEAR)
+        region.putalpha(self._lens_mask)  # everything outside the circle becomes transparent
+        self._lens_photo = ImageTk.PhotoImage(region)
+
+        radius = size // 2
+        canvas.create_image(x, y, image=self._lens_photo, tags="lens")
+        canvas.create_oval(x - radius, y - radius, x + radius, y + radius,
+                           outline="#333333", width=2, tags="lens")
 
     def _format_capture_info(self, tray_number: int, image_path: Path) -> str:
         """Builds a human-readable "Tray N - taken on DD-MM-YYYY at

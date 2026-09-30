@@ -50,7 +50,7 @@ Flow control + wiring between hardware and GUI.
 - Two rules only (see Process Flow); status bar shows `NO_TRAY`, `SCANNING`, `TRAY_PRESENT` or `CAPTURING`
 - QR scan and captures run in background threads; results are always passed back to the Tk main thread, even if a thread crashes
 - Manual capture: allowed any time except while another capture is running
-- On startup: shows a History error if the hall sensor isn't available, and a warning if the saved camera order doesn't match the connected cameras
+- On startup: shows a History error if the door sensor isn't available, and a warning if the saved camera order doesn't match the connected cameras
 - Logging: rotating log file (5 MB, 3 backups) + console; unhandled GUI errors are logged too
 
 ### config.py
@@ -70,7 +70,7 @@ Ribbon camera (Pi HQ Camera) via picamera2 + pyzbar. Scans until a QR code is fo
 - `discover_cameras()`: functional test per camera, the test frame doubles as preview
 - `check_saved_order()`: startup check whether the saved order still matches
 
-### hall_sensor.py
+### door_sensor.py
 Door sensor via GPIO (`pull_up=True`, magnet present = door closed). Reports its initial state on startup. If gpiozero or the GPIO pin isn't available, the program still starts and `error_message` is set. Temporary: `simulate_toggle()` for the test button.
 
 ### inventory.py
@@ -84,7 +84,7 @@ Reads/writes `inventory.txt` (one description per line, line 1 = tray 1). Writes
 - Temporary: "TEST: Toggle Door" button simulates the door sensor (Pi only; on Windows use Enter in the console)
 
 ### Mock modules (Windows)
-`hall_sensor_mock` (Enter toggles the door), `qr_code_scanner_mock` (always tray 1), `camera_stitching_mock` (webcams or placeholder images).
+`door_sensor_mock` (Enter toggles the door), `qr_code_scanner_mock` (always tray 1), `camera_stitching_mock` (webcams or placeholder images).
 
 ---
 

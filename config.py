@@ -50,9 +50,9 @@ QR_CAPTURE_SIZE = (1332, 990)
 QR_SCAN_TIMEOUT_S = 6.0                 # max waiting time for QR-Code [s] - tray is already standing when the door closes
 QR_SCAN_INTERVAL_S = 0.1                # pause between two scan attempts [s]
 
-# --- Door-Sensor -----------------------------------------------------------
-DOOR_SENSOR_GPIO = 17 #Pin11
-DOOR_SENSOR_BOUNCE_TIME_MS = 350
+# --- Hall-Sensor -----------------------------------------------------------
+HALL_SENSOR_GPIO = 17 #Pin11
+HALL_SENSOR_BOUNCE_TIME_MS = 350
 
 # TEMP door test: shows a "TEST: Toggle Door" button in the GUI that
 # simulates the magnet (open/close). Set to False to hide it again.
@@ -73,6 +73,10 @@ TRAY_UPPER_LIMIT = 50
 
 # --- Inventory ------------------------------------------------------------
 INVENTORY_FILE = BASE_DIR / "inventory.txt"
+
+# --- GUI: image preview magnifier -------------------------------------------
+LENS_SIZE = 300     # diameter of the magnifier circle [px]
+LENS_ZOOM = 2     # magnification relative to the preview (~2 = about the original resolution)
 
 # --- Logging ----------------------------------------------------------
 LOG_DIR = SSD_DIR / "logs"

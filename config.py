@@ -9,7 +9,7 @@ import sys
 
 # --- System -------------------------------------------------------
 if sys.platform.startswith("win32"):
-    BASE_DIR = Path(r"C:\Users\mjansson\Kardex\neuesKardexSystem\dev")
+    BASE_DIR = Path.home() / "Kardex" / "neuesKardexSystem" / "dev"
 else:
     BASE_DIR = Path(__file__).resolve().parent  
 

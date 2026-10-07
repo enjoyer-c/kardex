@@ -64,7 +64,7 @@ LENS_UPDATE_MS = 20       # Magnifier redraws at most every 20 ms while the mous
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Kardex Shuttle Logistics System - Test")
+        self.root.title("Kardex Content Tracker")
         self.root.geometry("1920x1080")
 
         self._log_entries: list[str] = []
@@ -644,7 +644,7 @@ class App:
 
         self._history_window = tk.Toplevel(self.root)
         self._history_window.title("History")
-        self._history_window.geometry("600x400")
+        self._history_window.geometry("700x400")
         self._history_window.lift()
         self._history_window.attributes("-topmost", True)
         self._history_window.after(200, lambda: self._history_window.attributes("-topmost", False))

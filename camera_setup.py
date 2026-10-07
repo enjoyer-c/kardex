@@ -37,7 +37,8 @@ def _connected_camera_paths() -> list[str]:
 
 def get_camera_devices() -> list[str]:
     """The camera devices to capture with, in left-to-right order: the order saved via Camera Setup, or all connected cameras in by-path order as a fallback.
-    Read fresh on every call, so a newly saved order is used right away without any restart."""
+    Read fresh on every call, so a newly saved order is used right away without any restart.
+    """
     return load_camera_order() or _connected_camera_paths()
 
 
@@ -66,7 +67,8 @@ def discover_cameras(max_cameras: int = 4) -> dict[str, "cv2.typing.MatLike"]:
 
 def check_cameras_connected() -> str | None:
     """Startup check: is at least one USB camera connected? Returns an error text if not, otherwise None.
-    Only on Linux - on Windows the mock modules are used and /dev/v4l doesn't exist."""
+    Only on Linux - on Windows the mock modules are used and /dev/v4l doesn't exist.
+    """
     if not sys.platform.startswith("linux"):
         return None
     if not _connected_camera_paths():
@@ -102,13 +104,15 @@ def check_saved_order() -> str | None:
 
 
 def short_name(device: str) -> str:
-    """Shortens a by-path device path down to just the last, most distinguishing segment, for display purposes."""
+    """Shortens a by-path device path down to just the last, most distinguishing segment, for display purposes.
+    """
     name = Path(device).name
     return name.replace("-video-index0", "")
 
 
 def load_camera_order() -> list[str]:
-    """Returns the saved camera order, or an empty list if none has been saved yet."""
+    """Returns the saved camera order, or an empty list if none has been saved yet.
+    """
     if not config.CAMERA_ORDER_FILE.exists():
         return []
     try:

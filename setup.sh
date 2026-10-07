@@ -1,23 +1,32 @@
 #!/bin/bash
 #
-# One-time setup script for a fresh Raspberry Pi to run the Kardex
-# project. Installs ALL packages via apt (no pip) - apt packages are
-# built to work together, so there are no version conflicts
+# One-time setup script for a fresh Raspberry Pi to run the Kardex project. 
+# Installs ALL packages via apt
 #
-# Run once after flashing a new Pi / setting up a replacement board:
-#   chmod +x setup_pi.sh
-#   ./setup_pi.sh
+# Run once after flashing a new Pi / setting up a replacement board
+# (as the normal user, NOT with sudo):
+#   chmod +x setup.sh
+#   ./setup.sh
 #
 # Safe to re-run - apt skips already-installed packages.
 
 set -e  # stop immediately on any error, instead of continuing half-broken
+
+# Run without sudo - otherwise the .venv would belong to root
+if [ "$EUID" -eq 0 ]; then
+    echo "Please run this script as the normal user, without sudo."
+    exit 1
+fi
+
+# Always work in the folder this script lives in (= project folder),
+# no matter where it was started from
+cd "$(dirname "$0")"
 
 echo "=== Updating package lists ==="
 sudo apt update
 
 echo "=== Installing system packages ==="
 sudo apt install -y \
-    python3-pip \
     python3-venv \
     python3-tk \
     python3-pil \
@@ -43,7 +52,7 @@ fi
 
 echo "=== Verifying imports ==="
 source .venv/bin/activate
-python3 -c "import cv2, numpy, PIL, pyzbar, gpiozero, picamera2; print('All imports OK')"
+python3 -c "import tkinter, cv2, numpy, PIL.ImageTk, pyzbar.pyzbar, gpiozero, picamera2; print('All imports OK')"
 
 echo ""
 echo "=== Setup complete ==="

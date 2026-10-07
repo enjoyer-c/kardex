@@ -607,7 +607,7 @@ class App:
             )
             return
 
-        script_path = Path(__file__).resolve().parent / "Setup_RibbonCAM.py"
+        script_path = Path(__file__).resolve().parent / "setup_ribbon_cam.py"
         if not script_path.exists():
             messagebox.showwarning(
                 "Camera Setup", f"Script not found:\n{script_path}", parent=self._camera_setup_window

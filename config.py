@@ -75,6 +75,7 @@ TRAY_UPPER_LIMIT = 50
 INVENTORY_FILE = BASE_DIR / "inventory.txt"
 
 # --- GUI: image preview magnifier -------------------------------------------
+SEARCH_DEBOUNCE_MS = 300    # wait time after the last keystroke before the search runs [ms]
 PREVIEW_DEBOUNCE_MS = 150 # Waiting time after search (arrow-keys) for loading the actual image
 LENS_UPDATE_MS = 20       # Magnifier redraws at most every 20 ms while the mouse moves (mouse events come much faster)
 LENS_SIZE = 300     # diameter of the magnifier circle [px]

@@ -274,7 +274,7 @@ class App:
         if self._search_after_id is not None:
             self.root.after_cancel(self._search_after_id)
 
-        self._search_after_id = self.root.after(300, self._apply_search)
+        self._search_after_id = self.root.after(config.SEARCH_DEBOUNCE_MS, self._apply_search)
 
     def _apply_search(self) -> None:
         self._search_after_id = None
@@ -965,7 +965,7 @@ class App:
         if self._preview_after_id is not None:
             self.root.after_cancel(self._preview_after_id)
 
-        self._preview_after_id = self.root.after(PREVIEW_DEBOUNCE_MS, self._apply_preview_selection)
+        self._preview_after_id = self.root.after(config.PREVIEW_DEBOUNCE_MS, self._apply_preview_selection)
 
     def _apply_preview_selection(self) -> None:
         self._preview_after_id = None
@@ -1015,7 +1015,7 @@ class App:
         # only rescale once it has stopped for a moment
         if self._preview_resize_after_id is not None:
             self.root.after_cancel(self._preview_resize_after_id)
-        self._preview_resize_after_id = self.root.after(PREVIEW_DEBOUNCE_MS, self._render_preview)
+        self._preview_resize_after_id = self.root.after(config.PREVIEW_DEBOUNCE_MS, self._render_preview)
 
     def _render_preview(self) -> None:
         """Scales the full image to the current size of the preview canvas (keeping the aspect
@@ -1063,7 +1063,7 @@ class App:
         self._lens_pos = (event.x, event.y)
         # Throttle: only schedule a redraw if none is pending
         if self._lens_after_id is None:
-            self._lens_after_id = self.root.after(LENS_UPDATE_MS, self._draw_lens)
+            self._lens_after_id = self.root.after(config.LENS_UPDATE_MS, self._draw_lens)
 
     def _handle_lens_release(self, event=None) -> None:
         self._hide_lens()

@@ -53,3 +53,63 @@ Traceback (most recent call last):
                                              ^^^^^^^^^^^^^^^^^^^
 NameError: name 'PREVIEW_DEBOUNCE_MS' is not defined
 
+2026-10-07 14:27:43 [ERROR] Unhandled GUI exception:
+Traceback (most recent call last):
+  File "C:\Program Files\Python312\Lib\tkinter\__init__.py", line 1968, in __call__
+    return self.func(*args)
+           ^^^^^^^^^^^^^^^^
+  File "c:\Users\mjansson\Kardex\neuesKardexSystem\dev\gui.py", line 1018, in _handle_preview_resize
+    self._preview_resize_after_id = self.root.after(PREVIEW_DEBOUNCE_MS, self._render_preview)
+                                                    ^^^^^^^^^^^^^^^^^^^
+NameError: name 'PREVIEW_DEBOUNCE_MS' is not defined
+
+2026-10-07 14:27:44 [ERROR] Unhandled GUI exception:
+Traceback (most recent call last):
+  File "C:\Program Files\Python312\Lib\tkinter\__init__.py", line 1968, in __call__
+    return self.func(*args)
+           ^^^^^^^^^^^^^^^^
+  File "c:\Users\mjansson\Kardex\neuesKardexSystem\dev\gui.py", line 968, in _handle_tray_selected
+    self._preview_after_id = self.root.after(PREVIEW_DEBOUNCE_MS, self._apply_preview_selection)
+                                             ^^^^^^^^^^^^^^^^^^^
+NameError: name 'PREVIEW_DEBOUNCE_MS' is not defined
+
+2026-10-07 14:27:44 [ERROR] Unhandled GUI exception:
+Traceback (most recent call last):
+  File "C:\Program Files\Python312\Lib\tkinter\__init__.py", line 1968, in __call__
+    return self.func(*args)
+           ^^^^^^^^^^^^^^^^
+  File "c:\Users\mjansson\Kardex\neuesKardexSystem\dev\gui.py", line 968, in _handle_tray_selected
+    self._preview_after_id = self.root.after(PREVIEW_DEBOUNCE_MS, self._apply_preview_selection)
+                                             ^^^^^^^^^^^^^^^^^^^
+NameError: name 'PREVIEW_DEBOUNCE_MS' is not defined
+
+2026-10-07 14:27:45 [ERROR] Unhandled GUI exception:
+Traceback (most recent call last):
+  File "C:\Program Files\Python312\Lib\tkinter\__init__.py", line 1968, in __call__
+    return self.func(*args)
+           ^^^^^^^^^^^^^^^^
+  File "c:\Users\mjansson\Kardex\neuesKardexSystem\dev\gui.py", line 968, in _handle_tray_selected
+    self._preview_after_id = self.root.after(PREVIEW_DEBOUNCE_MS, self._apply_preview_selection)
+                                             ^^^^^^^^^^^^^^^^^^^
+NameError: name 'PREVIEW_DEBOUNCE_MS' is not defined
+
+2026-10-07 14:27:46 [ERROR] Unhandled GUI exception:
+Traceback (most recent call last):
+  File "C:\Program Files\Python312\Lib\tkinter\__init__.py", line 1968, in __call__
+    return self.func(*args)
+           ^^^^^^^^^^^^^^^^
+  File "c:\Users\mjansson\Kardex\neuesKardexSystem\dev\gui.py", line 968, in _handle_tray_selected
+    self._preview_after_id = self.root.after(PREVIEW_DEBOUNCE_MS, self._apply_preview_selection)
+                                             ^^^^^^^^^^^^^^^^^^^
+NameError: name 'PREVIEW_DEBOUNCE_MS' is not defined
+
+2026-10-07 14:27:46 [ERROR] Unhandled GUI exception:
+Traceback (most recent call last):
+  File "C:\Program Files\Python312\Lib\tkinter\__init__.py", line 1968, in __call__
+    return self.func(*args)
+           ^^^^^^^^^^^^^^^^
+  File "c:\Users\mjansson\Kardex\neuesKardexSystem\dev\gui.py", line 968, in _handle_tray_selected
+    self._preview_after_id = self.root.after(PREVIEW_DEBOUNCE_MS, self._apply_preview_selection)
+                                             ^^^^^^^^^^^^^^^^^^^
+NameError: name 'PREVIEW_DEBOUNCE_MS' is not defined
+

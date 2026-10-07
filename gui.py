@@ -596,10 +596,7 @@ class App:
         self._close_camera_setup_window()
 
     def _launch_ribbon_cam_preview(self) -> None:
-        """Starts Setup_RibbonCAM.py as a separate process - a live
-        cv2.imshow window outside of Tkinter, for fine-tuning the
-        ribbon camera's focus/position while watching QR detection in
-        real time."""
+        """Starts setup_ribbon_cam.py as a separate process"""
         # Only one preview at a time - poll() is None means "still running"
         if self._ribbon_cam_process is not None and self._ribbon_cam_process.poll() is None:
             messagebox.showinfo(
@@ -739,6 +736,11 @@ class App:
         # Right-clicking opens the context menu
         self.tray_table.bind("<Button-3>", self._handle_right_click)
         self.tray_table.bind("<<TreeviewSelect>>", self._handle_tray_selected)
+        # One context menu for the whole program, reused for every right-click
+        # (creating a new one each time left old menus behind)
+        self._row_menu = tk.Menu(self.root, tearoff=0)
+        self._row_menu.add_command(label="Rename", command=self._rename_menu_row)
+        self._menu_row_id: Optional[str] = None
 
         self._populate_tray_table()
         self.tray_table.focus_set()
@@ -806,28 +808,33 @@ class App:
     # --- Rename with right mouse button ----------------------------------------
 
     def _handle_right_click(self, event) -> None:
-        """Shows a context menu with a Rename option for the row under
-        the cursor. Closes automatically on any click outside the menu."""
-
+        """Shows the context menu with a Rename option for the row under
+        the cursor. A click anywhere else closes it again."""
         row_id = self.tray_table.identify_row(event.y)
         if not row_id:
             return
 
         self.tray_table.selection_set(row_id)
+        self._menu_row_id = row_id
 
-        menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(label="Rename", command=lambda: self._rename_row(row_id))
-
-        def _close_menu(_event=None) -> None:
-            menu.unpost()
-
-        menu.bind("<FocusOut>", _close_menu)
-
+        self._row_menu.unpost()   # close a menu that might still be open
         try:
-            menu.tk_popup(event.x_root, event.y_root)
-            menu.focus_set()
+            self._row_menu.tk_popup(event.x_root, event.y_root)
         finally:
-            menu.grab_release()
+            # Only on Windows: there tk_popup works differently and the grab must be released.
+            # On Linux the grab is what closes the menu on a click elsewhere - releasing it
+            # would keep the menu open.
+            if sys.platform.startswith("win32"):
+                self._row_menu.grab_release()
+
+    def _rename_menu_row(self) -> None:
+        """Called by the context menu's "Rename" entry."""
+        row_id = self._menu_row_id
+        self._menu_row_id = None
+        # The table may have been rebuilt in the meantime (e.g. by the search) - then the row is gone
+        if row_id is not None and self.tray_table.exists(row_id):
+            self._rename_row(row_id)
+
 
     def _rename_row(self, row_id: str) -> None:
         """Prompts for a new description, confirms with the user, then

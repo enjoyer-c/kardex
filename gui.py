@@ -884,8 +884,8 @@ class App:
 
     def _build_preview_pane(self, preview_frame: ttk.Frame) -> None:
         self._preview_info_var = tk.StringVar(value="Select a tray to preview its last captured image.")
-        info_bar = ttk.Label(preview_frame, textvariable=self._preview_info_var, font=("Arial", 12, "bold"))
-        info_bar.pack(pady=(5, 10))
+        info_bar = ttk.Label(preview_frame, textvariable=self._preview_info_var, font=("Arial", 16, "bold"))
+        info_bar.pack(pady=(10, 10))
 
         # Canvas instead of a Label: the image is scaled to the real size of the pane,
         # and the magnifier can be drawn on top of it

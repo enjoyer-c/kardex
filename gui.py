@@ -57,8 +57,27 @@ STATUS_COLORS = {
 }
 
 
-PREVIEW_DEBOUNCE_MS = 150 # Waiting time after search (arrow-keys) for loading the actual image
-LENS_UPDATE_MS = 20       # Magnifier redraws at most every 20 ms while the mouse moves (mouse events come much faster)
+class _RenameDialog(simpledialog.Dialog):
+    """Like simpledialog.askstring, but with a much wider entry field -
+    the standard dialog's field is too short for longer descriptions."""
+
+    def __init__(self, parent, title: str, prompt: str, initial_value: str):
+        # Must be set BEFORE super().__init__ - that already builds and shows the dialog
+        self._prompt = prompt
+        self._initial_value = initial_value
+        super().__init__(parent, title)
+
+    def body(self, master):
+        ttk.Label(master, text=self._prompt, font=("Arial", 11)).pack(anchor="w", padx=5, pady=(5, 3))
+        self._entry = ttk.Entry(master, width=80, font=("Arial", 12))
+        self._entry.pack(fill="x", padx=5, pady=(0, 5))
+        self._entry.insert(0, self._initial_value)
+        self._entry.select_range(0, "end")   # text selected -> typing replaces it, arrow keys keep it
+        return self._entry                   # this widget gets the focus
+
+    def apply(self):
+        # Only called on OK / Enter - on Cancel / Escape, self.result stays None
+        self.result = self._entry.get()
 
 
 class App:
@@ -842,12 +861,12 @@ class App:
 
         tray_number_str, current_description, last_opened = self.tray_table.item(row_id, "values")
 
-        new_description = simpledialog.askstring(
-            "Rename",
+        dialog = _RenameDialog(
+            self.root, "Rename",
             f"New description for tray {tray_number_str}:",
-            initialvalue=current_description,
-            parent=self.root,
+            current_description,
         )
+        new_description = dialog.result
 
         if new_description is None:  # Dialog was canceled
             return

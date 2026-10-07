@@ -158,16 +158,16 @@ class App:
         hint_frame.grid(row=0, column=0, rowspan=2, sticky="w")
 
         tk.Label(
-            hint_frame, text="• Click or use arrow keys: preview image below",
-            font=("Arial", 10), fg="black", bg="white",
+            hint_frame, text="• Click / Arrows: Preview image",
+            font=("Arial", 11), fg="black", bg="white",
         ).pack(anchor="w")
         tk.Label(
-            hint_frame, text="• Right-click: rename description",
-            font=("Arial", 10), fg="black", bg="white",
+            hint_frame, text="• Right-click: Rename description",
+            font=("Arial", 11), fg="black", bg="white",
         ).pack(anchor="w")
         tk.Label(
-            hint_frame, text="• Hold left mouse button on the image: magnifier",
-            font=("Arial", 10), fg="black", bg="white",
+            hint_frame, text="• Hold left-click on image: Magnify", 
+            font=("Arial", 11), fg="black", bg="white",
         ).pack(anchor="w")
 
 

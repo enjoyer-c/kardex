@@ -1091,7 +1091,7 @@ class App:
         canvas.delete("lens")
         self._lens_photo = None
 
-        # Only over the image itself - outside of it there's nothing to magnify
+        # Only over the image itself
         if not (x0 <= x < x0 + shown_w and y0 <= y < y0 + shown_h):
             return
 

@@ -57,7 +57,7 @@ class flow_controll:
 
         self.current_tray_number: str | None = None
 
-        # Last known door state - None until the first sensor event.
+        # Last known door state  (None until the first sensor event)
         self._door_open: bool | None = None
 
         self._scan_running = False
@@ -123,7 +123,7 @@ class flow_controll:
     # --- Door events ----------------------------------------------------------
 
     def _on_door_change(self, is_open: bool) -> None:
-        # Same state as last time = no real change (e.g. a repeated sensor event) - ignore it
+        # Same state as last time = no real change (e.g. a repeated sensor event)
         if is_open == self._door_open:
             return
         self._door_open = is_open

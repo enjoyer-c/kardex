@@ -30,7 +30,13 @@ SETTINGS_FILE = BASE_DIR / "settings.json"
 
 USB_CAMERA_FOURCC = "MJPG"
 USB_CAMERA_RESOLUTION = (1280, 720)
-USB_CAMERA_WARMUP_FRAMES = 15
+USB_CAMERA_FPS = 15                     # frame rate of the permanent streams (lower = less USB bandwidth/CPU; None = camera default)
+
+# The USB cameras stay open permanently (camera_streams.py) - a capture only takes the newest frame
+USB_CAMERA_MAX_FRAME_AGE_S = 1.0        # a frame older than this is never used for a photo [s]
+USB_CAMERA_RECONNECT_S = 2.0            # pause before a lost/unplugged camera is opened again [s]
+USB_CAMERA_FIRST_FRAME_TIMEOUT_S = 5.0  # max wait for the first frame of a JUST started stream [s]
+CAMERA_SETUP_PREVIEW_REFRESH_MS = 500   # how often the Camera Setup window updates its camera pictures [ms]
 
 # --- Stitching -------------------------------------------------------------
 # How the single camera images are combined into one picture:
@@ -47,7 +53,7 @@ MAX_IMAGES_PER_TRAY = 3
 
 # --- QR-Code-Cam -----------------------------------------------------------
 QR_CAPTURE_SIZE = (1332, 990)   
-QR_SCAN_TIMEOUT_S = 6.0                 # max waiting time for QR-Code [s] - tray is already standing when the door closes
+QR_SCAN_TIMEOUT_S = 2.0                 # max waiting time for QR-Code [s] - tray is already standing when the door closes
 QR_SCAN_INTERVAL_S = 0.1                # pause between two scan attempts [s]
 
 # --- Door-Sensor -----------------------------------------------------------

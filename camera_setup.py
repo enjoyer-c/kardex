@@ -5,9 +5,11 @@ Camera setup helper: lets the user identify connected USB cameras via a live sna
 from pathlib import Path
 import json
 import sys
+import time
 
 import config
 import camera_stitching
+import camera_streams
 # Re-exported, so the GUI can use them without importing camera_stitching
 CamerasBusyError = camera_stitching.CamerasBusyError
 get_panorama_mode = camera_stitching.get_panorama_mode
@@ -42,27 +44,51 @@ def get_camera_devices() -> list[str]:
     return load_camera_order() or _connected_camera_paths()
 
 
+def start_camera_streams() -> None:
+    """Program start: opens all connected USB cameras and keeps them streaming (see camera_streams.py).
+    Does nothing on systems without /dev/v4l/by-path (e.g. Windows)."""
+    camera_streams.sync(_connected_camera_paths())
+
+
+def stop_camera_streams() -> None:
+    """Program end: releases all USB cameras."""
+    camera_streams.stop_all()
+
+
 def discover_cameras(max_cameras: int = 4) -> dict[str, "cv2.typing.MatLike"]:
-    """Returns {device path: preview frame} for all unique, actually-usable connected USB cameras, in discovery order. 
-    The frame from the functional test doubles as the preview image, so every camera only has to be opened (and warmed up) once.
+    """Returns {device path: preview frame} for all connected USB cameras that deliver frames, in discovery order.
 
-    Holds the camera lock for the whole search -> raises CamerasBusyError if a capture is currently running. 
-    Blocks for several seconds (warmup frames per camera).
+    Takes the frames from the permanently running streams - no camera is opened or closed here, so this
+    doesn't disturb a capture and is fast. Newly plugged-in cameras get a stream, unplugged ones lose theirs.
+    Only waits (up to USB_CAMERA_FIRST_FRAME_TIMEOUT_S) for streams that were just started.
     """
+    candidates = _connected_camera_paths()
+    camera_streams.sync(candidates)
+
     found: dict[str, "cv2.typing.MatLike"] = {}
+    deadline = time.monotonic() + config.USB_CAMERA_FIRST_FRAME_TIMEOUT_S
+    while True:
+        for device in candidates:
+            if device not in found:
+                frame, _error = camera_streams.get_frame(device)
+                if frame is not None:
+                    found[device] = frame
+        if len(found) == len(candidates) or time.monotonic() >= deadline:
+            break
+        time.sleep(0.1)
 
-    with camera_stitching.exclusive_cameras():
-        for candidate in _connected_camera_paths():
-            success, frame, _error = camera_stitching.capture_one(candidate)
-            if not success:
-                continue
+    ordered = [device for device in candidates if device in found][:max_cameras]
+    return {device: found[device] for device in ordered}
 
-            found[candidate] = frame
 
-            if len(found) >= max_cameras:
-                break
-
-    return found
+def get_preview_frames(devices: list[str]) -> dict[str, "cv2.typing.MatLike"]:
+    """Newest frame of each given camera, for the live preview in Camera Setup. Cameras without a fresh frame are left out."""
+    frames = {}
+    for device in devices:
+        frame, _error = camera_streams.get_frame(device)
+        if frame is not None:
+            frames[device] = frame
+    return frames
 
 
 def check_cameras_connected() -> str | None:

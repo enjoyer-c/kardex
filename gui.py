@@ -119,6 +119,9 @@ class App:
         self._camera_setup_refresh_button: Optional[ttk.Button] = None
         self._camera_setup_save_button: Optional[ttk.Button] = None
         self._camera_discovery_running = False
+        self._camera_setup_image_labels: dict[str, ttk.Label] = {}
+        self._camera_preview_after_id: Optional[str] = None
+        self._camera_preview_fetch_running = False
         self._ribbon_cam_process: Optional[subprocess.Popen] = None
 
         # set from main.py - called when the user triggers a manual capture
@@ -448,7 +451,7 @@ class App:
         if self._camera_discovery_running:
             # A search started from a previously closed window is still
             # running - its result will simply show up in this window
-            self._camera_setup_status_var.set("Searching for cameras - this takes a few seconds ...")
+            self._camera_setup_status_var.set("Searching for cameras ...")
             self._update_camera_setup_buttons()
         else:
             self._start_camera_discovery()
@@ -469,6 +472,10 @@ class App:
         self.log_event(f"Picture mode changed to: {mode_text}")
 
     def _close_camera_setup_window(self) -> None:
+        if self._camera_preview_after_id is not None:
+            self.root.after_cancel(self._camera_preview_after_id)
+            self._camera_preview_after_id = None
+        self._camera_setup_image_labels = {}
         if self._camera_setup_window is not None and self._camera_setup_window.winfo_exists():
             self._camera_setup_window.destroy()
         self._camera_setup_window = None
@@ -489,18 +496,15 @@ class App:
             self._camera_setup_save_button.state(["!disabled" if can_save else "disabled"])
 
     def _start_camera_discovery(self) -> None:
-        """Searches for cameras and grabs one preview frame from each - in
-        a background thread, since every camera needs its warmup frames
-        (several seconds in total) and the GUI + door-sensor flow must
-        keep running meanwhile. Used on window open AND by Refresh All,
-        so Refresh All also picks up newly plugged-in cameras.
-        If a capture is running right now, the camera lock makes the
-        search fail with a "busy" message instead of colliding with it."""
+        """Searches for cameras and takes one preview frame from each of the permanently running
+        streams. In a background thread, since a newly plugged-in camera needs a moment for its
+        first frame. Used on window open AND by Refresh All, so Refresh All also picks up newly
+        plugged-in cameras. Doesn't touch a running capture (the cameras stay open the whole time)."""
         if self._camera_discovery_running:
             return
 
         self._camera_discovery_running = True
-        self._camera_setup_status_var.set("Searching for cameras - this takes a few seconds ...")
+        self._camera_setup_status_var.set("Searching for cameras ...")
         self._update_camera_setup_buttons()
 
         threading.Thread(target=self._camera_discovery_worker, daemon=True).start()
@@ -543,13 +547,58 @@ class App:
         self._render_camera_setup_slots()
 
         if found:
-            self._camera_setup_status_var.set(f"{len(found)} camera(s) found.")
+            self._camera_setup_status_var.set(f"{len(found)} camera(s) found - pictures update live.")
             self.clear_error("usb_cameras")   # e.g. camera plugged in after startup
+            self._schedule_camera_preview_refresh(config.CAMERA_SETUP_PREVIEW_REFRESH_MS)
         else:
             self._camera_setup_status_var.set("No cameras found.")
             if sys.platform.startswith("linux"):   # on Windows the search can't find cameras anyway
                 self.set_error("usb_cameras", "No USB cameras found")
         self._update_camera_setup_buttons()
+
+    # --- Camera Setup: live pictures ---------------------------------------------
+
+    def _schedule_camera_preview_refresh(self, delay_ms: int) -> None:
+        if self._camera_preview_after_id is not None:
+            self.root.after_cancel(self._camera_preview_after_id)
+        self._camera_preview_after_id = self.root.after(delay_ms, self._refresh_camera_setup_previews)
+
+    def _refresh_camera_setup_previews(self) -> None:
+        """Fetches the newest frame of every camera in a background thread (decoding takes a
+        moment per camera), then updates the pictures in the Tk main thread."""
+        self._camera_preview_after_id = None
+        if self._camera_setup_window is None or not self._camera_setup_window.winfo_exists():
+            return
+        if self._camera_discovery_running or self._camera_preview_fetch_running:
+            return  # the running search / fetch schedules the next refresh itself
+
+        self._camera_preview_fetch_running = True
+        devices = list(self._camera_setup_order)
+        threading.Thread(target=self._camera_preview_worker, args=(devices,), daemon=True).start()
+
+    def _camera_preview_worker(self, devices: list[str]) -> None:
+        frames: dict = {}
+        try:
+            frames = camera_setup.get_preview_frames(devices)
+        except Exception:
+            logging.exception("Camera Setup live preview failed")
+        self.root.after(0, self._on_camera_previews_fetched, frames)
+
+    def _on_camera_previews_fetched(self, frames: dict) -> None:
+        self._camera_preview_fetch_running = False
+        if self._camera_setup_window is None or not self._camera_setup_window.winfo_exists():
+            return
+
+        for device, frame in frames.items():
+            label = self._camera_setup_image_labels.get(device)
+            if label is None or not label.winfo_exists():
+                continue
+            photo = self._frame_to_photo(frame)
+            label.configure(image=photo, text="")
+            self._camera_setup_photos[device] = photo   # keep a reference, otherwise Tk shows nothing
+
+        if not self._camera_discovery_running:
+            self._schedule_camera_preview_refresh(config.CAMERA_SETUP_PREVIEW_REFRESH_MS)
 
     @staticmethod
     def _frame_to_photo(frame) -> ImageTk.PhotoImage:
@@ -565,6 +614,7 @@ class App:
         called after any reorder, so the on-screen layout matches."""
         for child in self._camera_setup_slots_frame.winfo_children():
             child.destroy()
+        self._camera_setup_image_labels = {}
 
         for index, device in enumerate(self._camera_setup_order):
             slot = ttk.Frame(self._camera_setup_slots_frame, relief="groove", borderwidth=1, padding=10)
@@ -575,6 +625,7 @@ class App:
 
             image_label = ttk.Label(slot)
             image_label.pack()
+            self._camera_setup_image_labels[device] = image_label
             photo = self._camera_setup_photos.get(device)
             if photo is not None:
                 image_label.configure(image=photo)

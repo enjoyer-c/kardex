@@ -1,15 +1,20 @@
 """
-Handles the USB cameras and panorama stitching. Cameras are opened, warmed up, read, and released on every single capture"""
+Builds the final tray picture from the USB cameras. The cameras themselves stay open permanently (see camera_streams.py) -
+a capture only takes the newest frame of each camera, then stitches / places them side by side and saves the result.
+"""
 
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 import json
+import logging
 import threading
+import time
 import cv2
 from datetime import datetime
 
 import config
+import camera_streams
 
 
 @dataclass
@@ -64,10 +69,10 @@ class CamerasBusyError(RuntimeError):
 
 @contextmanager
 def exclusive_cameras():
-    """Reserves ALL USB cameras for the duration of the with-block, using the same lock as capture_and_stitch.
-    Non-blocking, same as capture_and_stitch: if the cameras are already in use, CamerasBusyError is raised immediately instead of waiting."""
+    """Makes sure only one capture runs at a time. Non-blocking: if a capture is already running,
+    CamerasBusyError is raised immediately instead of waiting."""
     if not _capture_lock.acquire(blocking=False):
-        raise CamerasBusyError("Cameras are busy - a capture or camera search is currently running")
+        raise CamerasBusyError("A capture is already running")
     try:
         yield
     finally:
@@ -81,45 +86,12 @@ def create_tray_folders() -> None:
         folder.mkdir(parents=True, exist_ok=True)
 
 
-def open_camera(device: str) -> cv2.VideoCapture:
-    cam = cv2.VideoCapture(device, config.CAP_BACKEND)
-    cam.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*config.USB_CAMERA_FOURCC))
-    cam.set(cv2.CAP_PROP_FRAME_WIDTH, config.USB_CAMERA_RESOLUTION[0])
-    cam.set(cv2.CAP_PROP_FRAME_HEIGHT, config.USB_CAMERA_RESOLUTION[1])
-    return cam
-
-
-def warmup(cam: cv2.VideoCapture, frames: int = config.USB_CAMERA_WARMUP_FRAMES) -> None:
-    """Reads and discards a number of frames to let exposure/focus settle."""
-    for _ in range(frames):
-        cam.read()
-
-
 def enforce_max_images(output_dir: Path, max_images: int) -> None:
     """Deletes the oldest panorama images if more than max_images are stored."""
     images = sorted(output_dir.glob("finalFrame_*.jpg"))
     while len(images) > max_images:
         oldest = images.pop(0)
         oldest.unlink()
-
-
-def capture_one(device: str) -> tuple[bool, "cv2.typing.MatLike | None", str | None]:
-    """Opens a single camera, captures one frame, and releases it again before returning (open -> warmup -> read -> release).
-    """
-    cam = open_camera(device)
-    try:
-        if not cam.isOpened():
-            return False, None, f"Camera failed to open: {device}"
-
-        warmup(cam)
-
-        ret, frame = cam.read()
-        if not ret:
-            return False, None, f"Camera {device}: failed to read frame"
-
-        return True, frame, None
-    finally:
-        cam.release()
 
 
 def _side_by_side(frames: list) -> "cv2.typing.MatLike":
@@ -135,8 +107,8 @@ def _side_by_side(frames: list) -> "cv2.typing.MatLike":
 
 
 def capture_and_stitch(camera_devices: list[str], tray_number: str) -> StitchResult:
-    """Captures one frame from each camera in parallel. Each camera is still individually opened. 
-    Stitches captures, and saves the result. Refuses to run if the cameras are already in use."""
+    """Takes the newest frame of each camera (all at the same moment), combines and saves them.
+    Refuses to run if another capture is already running."""
     try:
         with exclusive_cameras():
             return _capture_and_stitch_locked(camera_devices, tray_number)
@@ -146,14 +118,22 @@ def capture_and_stitch(camera_devices: list[str], tray_number: str) -> StitchRes
 
 def _capture_and_stitch_locked(camera_devices: list[str], tray_number: str) -> StitchResult:
     """The actual capture + stitch. Only ever called while exclusive_cameras() holds the camera lock (see capture_and_stitch)."""
-    results: list[tuple[bool, "cv2.typing.MatLike | None", str | None] | None] = [None] * len(camera_devices)
+    if not camera_devices:
+        return StitchResult(success=False, error_message="No USB cameras configured - please run Camera Setup")
+
+    t_start = time.monotonic()
+    # Cameras plugged in after startup get a stream now (then the first frame takes a moment)
+    camera_streams.ensure(camera_devices)
+
+    results: list[tuple["cv2.typing.MatLike | None", str | None] | None] = [None] * len(camera_devices)
 
     def _worker(index: int, device: str) -> None:
         try:
-            results[index] = capture_one(device)
+            results[index] = camera_streams.get_frame(device, wait_s=config.USB_CAMERA_FIRST_FRAME_TIMEOUT_S)
         except Exception as exc:
-            results[index] = (False, None, f"Unexpected error on {device}: {exc}")
+            results[index] = (None, f"Unexpected error on {device}: {exc}")
 
+    # One thread per camera, so all frames are decoded at (almost) the same moment
     threads = [
         threading.Thread(target=_worker, args=(i, device))
         for i, device in enumerate(camera_devices)
@@ -164,10 +144,11 @@ def _capture_and_stitch_locked(camera_devices: list[str], tray_number: str) -> S
         t.join()
 
     frames = []
-    for success, frame, error_message in results:
-        if not success:
+    for frame, error_message in results:
+        if frame is None:
             return StitchResult(success=False, error_message=error_message)
         frames.append(frame)
+    t_frames = time.monotonic()
 
     output_dir = config.OUTPUT_DIR / tray_number
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -193,5 +174,11 @@ def _capture_and_stitch_locked(camera_devices: list[str], tray_number: str) -> S
         return StitchResult(success=False, error_message=f"Could not save image: {pano_path}")
 
     enforce_max_images(output_dir, config.MAX_IMAGES_PER_TRAY)
+
+    # Timing in the log file - the photo moment is t_frames; stitching/saving afterwards doesn't matter for the tray position
+    logging.info(
+        "Capture tray %s: frames taken after %.0f ms, combined + saved after another %.0f ms (%s)",
+        tray_number, (t_frames - t_start) * 1000, (time.monotonic() - t_frames) * 1000, panorama_mode,
+    )
 
     return StitchResult(success=True, panorama_path=pano_path)

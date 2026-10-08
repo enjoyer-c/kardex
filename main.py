@@ -316,6 +316,9 @@ def _handle_callback_exception(exc, val, tb) -> None:
 def main() -> None:
     camera_stitching.create_tray_folders()
 
+    # Open all USB cameras NOW and keep them streaming - a capture then only takes the newest frame
+    camera_setup.start_camera_streams()
+
     _set_windows_app_id()
     root = tk.Tk(className="Kardex")
     root.report_callback_exception = _handle_callback_exception
@@ -328,7 +331,10 @@ def main() -> None:
     app = gui.App(root)
     app.load_history_from_log_file(config.LOG_FILE)
     flow_controll(app)
-    root.mainloop()
+    try:
+        root.mainloop()
+    finally:
+        camera_setup.stop_camera_streams()
 
 
 if __name__ == "__main__":

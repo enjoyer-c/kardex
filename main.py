@@ -1,6 +1,5 @@
 from __future__ import annotations
 import tkinter as tk
-from enum import Enum, auto
 import logging
 import sys
 import logging.handlers
@@ -35,14 +34,6 @@ logging.basicConfig(
         logging.StreamHandler(),
     ],
 )
-
-class Status(Enum):
-    """see _current_status."""
-    NO_TRAY = auto()       # No tray at the front - nothing to do
-    SCANNING = auto()      # Door just closed - ribbon cam checks for a QR code
-    TRAY_PRESENT = auto()  # QR code seen - tray is at the front, tray number known
-    CAPTURING = auto()     # USB cameras are taking photos / stitching
-
 
 class flow_controll:
     """Reacts to the door sensor and GUI actions. The whole logic is two rules:
@@ -97,29 +88,6 @@ class flow_controll:
         if config.DOOR_TEST_BUTTON and hasattr(self.sensor, "simulate_toggle"):
             self.app.on_simulate_door = self._simulate_door
 
-        self._update_status()
-
-    # --- Status bar ---------------------------------------------------------
-
-    def _current_status(self) -> Status:
-        if self._capture_running:
-            return Status.CAPTURING
-        if self._scan_running:
-            return Status.SCANNING
-        if self.current_tray_number is not None:
-            return Status.TRAY_PRESENT
-        return Status.NO_TRAY
-
-    def _update_status(self) -> None:
-        status = self._current_status()
-        texts = {
-            Status.NO_TRAY: "Waiting - no tray at the front",
-            Status.SCANNING: "QR SCAN - checking for a tray",
-            Status.TRAY_PRESENT: f"Tray #{self.current_tray_number} at the front",
-            Status.CAPTURING: "CAPTURE - photos are being taken",
-        }
-        self.app.set_status(texts[status], status.name)
-
     # --- Door events ----------------------------------------------------------
 
     def _on_door_change(self, is_open: bool) -> None:
@@ -155,7 +123,6 @@ class flow_controll:
         # Forget the previous tray FIRST: after a door close, only what the camera sees counts.
         self.current_tray_number = None
         self._scan_running = True
-        self._update_status()
 
         # The ribbon cam live preview (Camera Setup) blocks the camera -> close it first, otherwise the scan fails
         preview_process = self.app.close_ribbon_cam_preview()
@@ -217,8 +184,6 @@ class flow_controll:
                 self._start_qr_scan()
                 return
 
-        self._update_status()
-
         # Door opened while the scan was still running: the photos were skipped back then -> take them now
         if self._door_open and self.current_tray_number is not None:
             self.app.log_event("Door opened during QR scan - taking photos now")
@@ -234,7 +199,6 @@ class flow_controll:
             return
 
         self._capture_running = True
-        self._update_status()
         threading.Thread(target=self._capture_worker, args=(tray_number,), daemon=True).start()
 
     def _run_capture_safely(self, tray_number: str):
@@ -276,8 +240,6 @@ class flow_controll:
             if self.current_tray_number is not None:
                 self._start_capture(self.current_tray_number)
                 return
-
-        self._update_status()
 
     # --- Manual capture -------------------------------------------------------
 

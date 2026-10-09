@@ -29,7 +29,7 @@ A false trigger (e.g. a hand in the light barrier) can't break the flow: without
 
 ### main.py
 Flow control + wiring between hardware and GUI.
-- Two rules only (see Process Flow); status bar shows `NO_TRAY`, `SCANNING`, `TRAY_PRESENT` or `CAPTURING`
+- Two rules only (see Process Flow); no status display - what happened is visible in the History, the "Last Capture" column and the red error banner
 - QR scan and captures run in background threads; results are always passed back to the Tk main thread, even if a thread crashes
 - Before each scan, an open ribbon-cam live preview is closed automatically
 - Manual capture: allowed any time except while another capture is running
@@ -67,7 +67,7 @@ Door sensor (reed contact) via GPIO (`pull_up=True`, magnet present = door close
 Reads/writes `inventory.txt`. Writes are crash-safe (temp file + `os.replace`). `normalize_tray_number()` accepts only plain integers within the tray limits (`"01"` → `"1"`).
 
 ### gui.py
-- Color-coded status bar and a red error banner for problems (sensor, cameras, failed scan/capture)
+- Red error banner for problems (sensor, cameras, failed scan/capture) - no status display
 - Searchable tray table; right-click → rename description
 - Image preview of the selected tray's latest capture, scaled to the size of the preview area; hold the left mouse button on the image for a magnifier
 - After a capture, only the affected table row (and its preview) is refreshed

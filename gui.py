@@ -1,9 +1,7 @@
 """
 GUI Layout:
-Section 1 - Row 1: (spacer) - Status (center) - (spacer) - Manual
-    Capture / History buttons
-Section 1 - Row 2: Camera Setup button (below History) / Search bar
-    (centered)
+Section 1: Hints (left) - Search bar (center) - error banner (only if
+    there's a problem) - Manual Capture / History / Camera Setup buttons
 
 Section 2: Resizable split (ttk.Panedwindow, vertical) between:
     - Top pane: Table listing all tray's (1-50), scrollable
@@ -47,14 +45,6 @@ import config
 import inventory
 import logging
 import camera_setup
-
-
-STATUS_COLORS = {
-    "NO_TRAY": ("#e8f5e9", "#2e7d32"),        # green  - waiting, nothing to do
-    "SCANNING": ("#fff3e0", "#e65100"),       # orange - ribbon cam is looking
-    "TRAY_PRESENT": ("#e3f2fd", "#1565c0"),   # blue   - tray at the front
-    "CAPTURING": ("#f3e5f5", "#6a1b9a"),      # purple - photos being taken
-}
 
 
 class _RenameDialog(simpledialog.Dialog):
@@ -152,7 +142,7 @@ class App:
         top_frame = ttk.Frame(self.root)
         top_frame.pack(padx=20, pady=(20, 15), fill="x")
         top_frame.grid_columnconfigure(0, weight=1)  # left spacer
-        top_frame.grid_columnconfigure(1, weight=0)  # status / search
+        top_frame.grid_columnconfigure(1, weight=0)  # search
         top_frame.grid_columnconfigure(2, weight=1)  # right spacer
         top_frame.grid_columnconfigure(3, weight=0)  # manual capture button
         top_frame.grid_columnconfigure(4, weight=0)  # history / camera setup button
@@ -174,19 +164,7 @@ class App:
         ).pack(anchor="w")
 
 
-        self.status_text = tk.StringVar(value="Waiting - no tray at the front")
-        self.status_label = tk.Label(
-            top_frame,
-            textvariable=self.status_text,
-            font=("Arial", 24, "bold"),
-            padx=20,
-            pady=8,
-        )
-        self.status_label.grid(row=0, column=1)
-        bg, fg = STATUS_COLORS["NO_TRAY"]
-        self.status_label.configure(bg=bg, fg=fg)
-
-        # Red error banner between the status and the buttons (column 2, over both rows).
+        # Red error banner between the search and the buttons (column 2, over both rows).
         # Hidden (grid_remove) as long as there's no persistent problem - see set_error / clear_error.
         self.error_label = tk.Label(
             top_frame, text="", font=("Arial", 13, "bold"),
@@ -229,7 +207,7 @@ class App:
         camera_setup_button.grid(row=1, column=4, pady=(12, 0), sticky="e")
 
         search_frame = ttk.Frame(top_frame)
-        search_frame.grid(row=1, column=1, pady=(12, 0))
+        search_frame.grid(row=0, column=1, rowspan=2)
 
         ttk.Label(search_frame, text="search:", font=("Arial", 13)).pack(side="left", padx=(0, 8))
         self.search_var = tk.StringVar()
@@ -239,18 +217,13 @@ class App:
 
         # Invisible mirror of the "search:" label on the right - without
         # this, the entry box visually drifts right (the label only adds
-        # width on the left), so it looks off-center under the status
-        # box even though this whole frame is centered in the grid cell
+        # width on the left), so it looks off-center even though this
+        # whole frame is centered in the grid cell
         bg_color = style.lookup("TFrame", "background") or self.root.cget("bg")
         tk.Label(
             search_frame, text="search:", font=("Arial", 13), fg=bg_color, bg=bg_color
         ).pack(side="left", padx=(8, 0))
 
-
-    def set_status(self, text: str, state_name: str = "NO_TRAY") -> None:
-        self.status_text.set(text)
-        bg, fg = STATUS_COLORS.get(state_name, ("#eeeeee", "#333333"))
-        self.status_label.configure(bg=bg, fg=fg)
 
     # --- Error banner -----------------------------------------------------------
 

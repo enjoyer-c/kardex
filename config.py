@@ -66,7 +66,7 @@ DOOR_SENSOR_INVERTED = True
 
 # TEMP door test: shows a "TEST: Toggle Door" button in the GUI that
 # simulates the magnet (open/close). Set to False to hide it again.
-DOOR_TEST_BUTTON = True
+DOOR_TEST_BUTTON = False
 
 # --- Data -----------------------------------------------------------------
 if sys.platform.startswith("linux"):

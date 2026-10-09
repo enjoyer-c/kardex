@@ -47,6 +47,12 @@ import logging
 import camera_setup
 
 
+# The Pi taskbar finds a window's icon via its window NAME ("kardex" = kardex.desktop). The main window is called
+# "kardex" (className="Kardex" in main.py), popups would get "!toplevel" -> no icon. See App._new_popup.
+POPUP_WINDOW_NAME = "kardex"
+POPUP_WINDOW_CLASS = "Kardex"
+
+
 class _RenameDialog(simpledialog.Dialog):
     """Like simpledialog.askstring, but with a much wider entry field -
     the standard dialog's field is too short for longer descriptions."""
@@ -123,6 +129,9 @@ class App:
 
         # TEMP door test: set from main.py - simulates a door open/close
         self.on_simulate_door: Optional[Callable[[], None]] = None
+
+        # One invisible holder per popup - see _new_popup
+        self._popup_holders: dict[str, tk.Frame] = {}
 
         self._button_icons: dict[str, ImageTk.PhotoImage] = {}
         self._load_button_icons()
@@ -278,12 +287,12 @@ class App:
         capture manually - kept out of the main view since this is a
         fallback path, not something used in normal operation."""
 
+        # Already open -> close and open it again. On the Pi (Wayland) a program can't bring its own
+        # window to the front - a NEW window is always shown on top, though.
         if self._manual_capture_window is not None and self._manual_capture_window.winfo_exists():
-            self._manual_capture_window.lift()
-            self._manual_capture_window.focus_force()
-            return
+            self._manual_capture_window.destroy()
 
-        self._manual_capture_window = tk.Toplevel(self.root)
+        self._manual_capture_window = self._new_popup("manual_capture")
         self._manual_capture_window.title("Manual Capture")
         self._manual_capture_window.geometry("360x150")
         self._manual_capture_window.resizable(False, False)
@@ -353,8 +362,7 @@ class App:
 
     def _open_camera_setup_window(self) -> None:
         if self._camera_setup_window is not None and self._camera_setup_window.winfo_exists():
-            self._camera_setup_window.lift()
-            self._camera_setup_window.focus_force()
+            self._bring_to_front(self._camera_setup_window)
             return
 
         # Always allowed, in every state - a setup is usually done WITH the
@@ -368,7 +376,7 @@ class App:
 
         # The window opens IMMEDIATELY - the camera search runs in the
         # background and fills in the slots once it's done
-        self._camera_setup_window = tk.Toplevel(self.root)
+        self._camera_setup_window = self._new_popup("camera_setup")
         self._camera_setup_window.title("Camera Setup")
         self._camera_setup_window.resizable(False, False)
 
@@ -698,21 +706,53 @@ class App:
 
     # --- History (separate pop-up window) --------------------------------
 
+    def _new_popup(self, key: str) -> tk.Toplevel:
+        """Creates a popup window named "kardex", so the taskbar shows the Kardex icon for it too.
+        Tk doesn't allow two windows with the same name under the same parent - so every popup gets its
+        own invisible holder frame (never packed) as parent. The popup itself is a normal, independent window."""
+        holder = self._popup_holders.get(key)
+        if holder is None:
+            holder = tk.Frame(self.root, name=f"{key}_holder")
+            self._popup_holders[key] = holder
+        return tk.Toplevel(holder, name=POPUP_WINDOW_NAME, class_=POPUP_WINDOW_CLASS)
+
+    @staticmethod
+    def _bring_to_front(window: tk.Toplevel) -> None:
+        """Tries to bring a popup in front of everything: restore it, put it on top for a moment, then back to
+        normal (otherwise it would stay on top forever). Works on Windows; on the Pi (Wayland) the desktop
+        ignores it - programs aren't allowed to bring their own windows to the front there."""
+        window.deiconify()
+        window.lift()
+        window.attributes("-topmost", True)
+        window.after(200, lambda: window.winfo_exists() and window.attributes("-topmost", False))
+        window.focus_force()
+
     def _open_history_window(self) -> None:
+        # Already open -> close and open it again (same reason as Manual Capture - the content
+        # is rebuilt from the log entries anyway, so nothing gets lost)
         if self._history_window is not None and self._history_window.winfo_exists():
-            self._history_window.lift()
-            self._history_window.focus_force()
-            return
+            self._history_window.destroy()
 
-        self._history_window = tk.Toplevel(self.root)
+        self._history_window = self._new_popup("history")
         self._history_window.title("History")
-        self._history_window.geometry("700x400")
-        self._history_window.lift()
-        self._history_window.attributes("-topmost", True)
-        self._history_window.after(200, lambda: self._history_window.attributes("-topmost", False))
+        # Wide enough for long entries (error messages with device paths)
+        self._history_window.geometry("1300x500")
+        self._bring_to_front(self._history_window)
 
-        self._history_listbox = tk.Listbox(self._history_window, font=("Consolas", 10))
-        self._history_listbox.pack(padx=10, pady=10, fill="both", expand=True)
+        list_frame = ttk.Frame(self._history_window)
+        list_frame.pack(padx=10, pady=10, fill="both", expand=True)
+        # Monospace font, so the timestamps line up - Consolas only exists on Windows
+        mono_font = ("Consolas", 10) if sys.platform.startswith("win32") else ("DejaVu Sans Mono", 10)
+        self._history_listbox = tk.Listbox(list_frame, font=mono_font)
+        # Scrollbars: vertical for many entries, horizontal for entries that are still too long
+        y_scroll = ttk.Scrollbar(list_frame, orient="vertical", command=self._history_listbox.yview)
+        x_scroll = ttk.Scrollbar(list_frame, orient="horizontal", command=self._history_listbox.xview)
+        self._history_listbox.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+        self._history_listbox.grid(row=0, column=0, sticky="nsew")
+        y_scroll.grid(row=0, column=1, sticky="ns")
+        x_scroll.grid(row=1, column=0, sticky="ew")
+        list_frame.grid_rowconfigure(0, weight=1)
+        list_frame.grid_columnconfigure(0, weight=1)
 
         for entry in self._log_entries:
             self._history_listbox.insert(tk.END, entry)

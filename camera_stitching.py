@@ -22,6 +22,7 @@ class StitchResult:
     success: bool
     panorama_path: Path | None = None
     error_message: str | None = None
+    frames_taken_at: float | None = None   # time.monotonic() when the frames were taken (for the log)
 
 _capture_lock = threading.Lock()
 
@@ -177,8 +178,8 @@ def _capture_and_stitch_locked(camera_devices: list[str], tray_number: str) -> S
 
     # Timing in the log file - the photo moment is t_frames; stitching/saving afterwards doesn't matter for the tray position
     logging.info(
-        "Capture tray %s: frames taken after %.0f ms, combined + saved after another %.0f ms (%s)",
-        tray_number, (t_frames - t_start) * 1000, (time.monotonic() - t_frames) * 1000, panorama_mode,
+        "  details: frames from the streams in %.0f ms, combining + saving %.0f ms (%s)",
+        (t_frames - t_start) * 1000, (time.monotonic() - t_frames) * 1000, panorama_mode,
     )
 
-    return StitchResult(success=True, panorama_path=pano_path)
+    return StitchResult(success=True, panorama_path=pano_path, frames_taken_at=t_frames)

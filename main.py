@@ -5,6 +5,7 @@ import sys
 import logging.handlers
 import subprocess
 import threading
+import time
 import traceback
 
 import config
@@ -25,7 +26,8 @@ config.LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
+    # Milliseconds in every line - needed to measure the time between door signal and photo
+    format="%(asctime)s.%(msecs)03d [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
         logging.handlers.RotatingFileHandler(
@@ -34,6 +36,8 @@ logging.basicConfig(
         logging.StreamHandler(),
     ],
 )
+# picamera2 writes 6 lines ("Camera now open", "Camera started", ...) on every QR scan - only keep its warnings/errors
+logging.getLogger("picamera2").setLevel(logging.WARNING)
 
 class flow_controll:
     """Reacts to the door sensor and GUI actions. The whole logic is two rules:
@@ -55,9 +59,11 @@ class flow_controll:
         self._rescan_requested = False   # door closed again while a scan was running
         self._capture_running = False    # automatic OR manual capture in progress
         self._capture_pending = False    # door opened again while a capture was running
+        self._door_opened_at: float | None = None   # time.monotonic() of the last door-open SIGNAL (for the log)
 
         self.sensor = door_sensor.DoorSensor(
-            on_change=lambda is_open: self.app.root.after(0, self._on_door_change, is_open)
+            # The signal time is taken HERE, in the sensor thread - the log can then show how long it took until the photo
+            on_change=lambda is_open: self.app.root.after(0, self._on_door_change, is_open, time.monotonic())
         )
 
         # If the door sensor couldn't be set up, show it in the History; otherwise nobody notices that door detection isn't working.
@@ -90,11 +96,19 @@ class flow_controll:
 
     # --- Door events ----------------------------------------------------------
 
-    def _on_door_change(self, is_open: bool) -> None:
+    def _on_door_change(self, is_open: bool, signal_time: float | None = None) -> None:
         # Same state as last time = no real change (e.g. a repeated sensor event)
         if is_open == self._door_open:
             return
         self._door_open = is_open
+        if signal_time is None:
+            signal_time = time.monotonic()
+
+        # Every door signal as its own, easy to spot line (also in the History)
+        delay_ms = (time.monotonic() - signal_time) * 1000
+        self.app.log_event(f"===== DOOR {'OPENED' if is_open else 'CLOSED'} ===== (signal handled after {delay_ms:.0f} ms)")
+        if is_open:
+            self._door_opened_at = signal_time
 
         if is_open:
             self._handle_door_opened()
@@ -112,10 +126,12 @@ class flow_controll:
         """Door opened -> photos, but only if a tray is at the front."""
         if self.current_tray_number is None:
             if not self._scan_running:
-                self.app.log_event("Door opened - no tray at the front, no photos")
+                self.app.log_event("No tray known at the front -> no photos")
+            else:
+                self.app.log_event("QR scan still running -> photos follow as soon as it finds a tray")
             # If a scan is still running, _on_qr_scan_done catches up on the photos as soon as it finds a tray
             return
-        self._start_capture(self.current_tray_number)
+        self._start_capture(self.current_tray_number, self._door_opened_at)
 
     # --- QR scan (ribbon cam) -------------------------------------------------
 
@@ -123,6 +139,7 @@ class flow_controll:
         # Forget the previous tray FIRST: after a door close, only what the camera sees counts.
         self.current_tray_number = None
         self._scan_running = True
+        self.app.log_event("QR scan started")
 
         # The ribbon cam live preview (Camera Setup) blocks the camera -> close it first, otherwise the scan fails
         preview_process = self.app.close_ribbon_cam_preview()
@@ -135,6 +152,7 @@ class flow_controll:
         """Runs in a background thread. ALWAYS reports back to the Tk main thread - even if the scan crashes - otherwise _scan_running would stay True forever."""
         qr_result = None
         error_message = None
+        t_start = time.monotonic()
         try:
             if preview_process is not None:
                 # Wait until the preview has really released the camera (kill it if it doesn't react)
@@ -149,9 +167,9 @@ class flow_controll:
             logging.exception("QR scan worker crashed")
             error_message = f"QR scan failed: {exc}"
 
-        self.app.root.after(0, self._on_qr_scan_done, qr_result, error_message)
+        self.app.root.after(0, self._on_qr_scan_done, qr_result, error_message, time.monotonic() - t_start)
 
-    def _on_qr_scan_done(self, qr_result, error_message: str | None = None) -> None:
+    def _on_qr_scan_done(self, qr_result, error_message: str | None = None, duration_s: float = 0.0) -> None:
         self._scan_running = False
 
         # Red banner while the ribbon cam keeps failing - disappears with the next scan that works again
@@ -161,21 +179,21 @@ class flow_controll:
             self.app.clear_error("ribbon_scan")
 
         if error_message is not None:
-            self.app.log_event(f"Error: {error_message}", level=logging.ERROR)
+            self.app.log_event(f"QR scan FAILED after {duration_s:.1f} s: {error_message}", level=logging.ERROR)
         elif qr_result is None:
             # Normal case, e.g. after a tray went back in - not an error anymore
-            self.app.log_event("No QR code visible - no tray at the front")
+            self.app.log_event(f"QR scan done after {duration_s:.1f} s: no QR code -> no tray at the front")
         else:
             # QR content comes from outside - only accept valid tray numbers, normalized ("01" -> "1")
             tray_number = inventory.normalize_tray_number(qr_result.data)
             if tray_number is None:
                 self.app.log_event(
-                    f"Error: QR-Code contains no valid tray number: '{qr_result.data}'",
+                    f"QR scan done after {duration_s:.1f} s: QR code contains no valid tray number: '{qr_result.data}'",
                     level=logging.ERROR,
                 )
             else:
                 self.current_tray_number = tray_number
-                self.app.log_event(f"Tray {tray_number} detected at the front")
+                self.app.log_event(f"QR scan done after {duration_s:.1f} s: tray {tray_number} at the front")
 
         # Door closed again (after opening) while we were scanning: this result may already be outdated - look again
         if self._rescan_requested:
@@ -186,12 +204,13 @@ class flow_controll:
 
         # Door opened while the scan was still running: the photos were skipped back then -> take them now
         if self._door_open and self.current_tray_number is not None:
-            self.app.log_event("Door opened during QR scan - taking photos now")
-            self._start_capture(self.current_tray_number)
+            self.app.log_event("Door had opened during the QR scan - taking photos now")
+            self._start_capture(self.current_tray_number, self._door_opened_at)
 
     # --- Capture (USB cameras) ------------------------------------------------
 
-    def _start_capture(self, tray_number: str) -> None:
+    def _start_capture(self, tray_number: str, door_opened_at: float | None = None) -> None:
+        """door_opened_at: time of the door signal that triggered this capture (None for a manual capture) - only for the log."""
         if self._capture_running:
             # e.g. false trigger photo still running, and the door opens again for real -> that one must not get lost, it's the final one
             self._capture_pending = True
@@ -199,7 +218,7 @@ class flow_controll:
             return
 
         self._capture_running = True
-        threading.Thread(target=self._capture_worker, args=(tray_number,), daemon=True).start()
+        threading.Thread(target=self._capture_worker, args=(tray_number, door_opened_at), daemon=True).start()
 
     def _run_capture_safely(self, tray_number: str):
         """Wraps capture_and_stitch so it ALWAYS returns a StitchResult, even if something inside crashes.
@@ -214,11 +233,11 @@ class flow_controll:
                 success=False, error_message=f"Capture crashed: {exc}"
             )
 
-    def _capture_worker(self, tray_number: str) -> None:
+    def _capture_worker(self, tray_number: str, door_opened_at: float | None = None) -> None:
         result = self._run_capture_safely(tray_number)
-        self.app.root.after(0, self._on_capture_done, result, tray_number)
+        self.app.root.after(0, self._on_capture_done, result, tray_number, door_opened_at)
 
-    def _on_capture_done(self, result, tray_number: str) -> None:
+    def _on_capture_done(self, result, tray_number: str, door_opened_at: float | None = None) -> None:
         self._capture_running = False
 
         # Red banner after a failed capture (a photo is missing!) - disappears with the next successful capture
@@ -228,17 +247,21 @@ class flow_controll:
             self.app.set_error("capture", f"Last capture failed (tray {tray_number}) - see History")
 
         if result.success:
+            # THE number that matters: how long after the door signal were the photos taken?
+            frames_taken_at = getattr(result, "frames_taken_at", None)   # the Windows mock doesn't have it
+            if door_opened_at is not None and frames_taken_at is not None:
+                self.app.log_event(f"Photos of tray {tray_number} taken {frames_taken_at - door_opened_at:.2f} s after the door signal")
             self.app.log_event(f"Capture saved for tray {tray_number}: {result.panorama_path.name}")
             # Only this tray's row  gets refreshed
             self.app.update_tray_row(int(tray_number))
         else:
-            self.app.log_event(f"Error: {result.error_message}", level=logging.ERROR)
+            self.app.log_event(f"Capture FAILED for tray {tray_number}: {result.error_message}", level=logging.ERROR)
 
         if self._capture_pending:
             self._capture_pending = False
             # Only if a tray is still known - if the door closed in between and the scan found nothing, there's nothing to photograph
             if self.current_tray_number is not None:
-                self._start_capture(self.current_tray_number)
+                self._start_capture(self.current_tray_number, self._door_opened_at)
                 return
 
     # --- Manual capture -------------------------------------------------------
@@ -292,6 +315,7 @@ def main() -> None:
 
     app = gui.App(root)
     app.load_history_from_log_file(config.LOG_FILE)
+    app.log_event("################ Program started ################")
     flow_controll(app)
     try:
         root.mainloop()

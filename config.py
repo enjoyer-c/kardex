@@ -53,12 +53,16 @@ MAX_IMAGES_PER_TRAY = 3
 
 # --- QR-Code-Cam -----------------------------------------------------------
 QR_CAPTURE_SIZE = (1332, 990)   
-QR_SCAN_TIMEOUT_S = 2.0                 # max waiting time for QR-Code [s] - tray is already standing when the door closes
+QR_SCAN_TIMEOUT_S = 6.0                 # max waiting time for QR-Code [s] - tray is already standing when the door closes
 QR_SCAN_INTERVAL_S = 0.1                # pause between two scan attempts [s]
 
 # --- Door-Sensor -----------------------------------------------------------
 DOOR_SENSOR_GPIO = 17 #Pin11
 DOOR_SENSOR_BOUNCE_TIME_MS = 350
+
+# Direction of the contact. False: contact closed (magnet present) = door CLOSED.
+# True: the other way round (e.g. NC contact) -> Testen !!!!!!!!!!!!!
+DOOR_SENSOR_INVERTED = True
 
 # TEMP door test: shows a "TEST: Toggle Door" button in the GUI that
 # simulates the magnet (open/close). Set to False to hide it again.

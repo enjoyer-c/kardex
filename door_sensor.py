@@ -49,7 +49,9 @@ class DoorSensor:
         self._handle_change()  # evaluate initial state on startup
 
     def _handle_change(self) -> None:
-        self._is_open = not self._button.is_pressed
+        contact_closed = self._button.is_pressed
+        # DOOR_SENSOR_INVERTED flips the meaning of the contact (see config.py)
+        self._is_open = contact_closed if config.DOOR_SENSOR_INVERTED else not contact_closed
  
         if self._on_change:
             self._on_change(self._is_open)

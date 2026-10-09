@@ -106,7 +106,6 @@ class App:
         self._camera_setup_slots_frame: Optional[ttk.Frame] = None
         self._camera_setup_status_var: Optional[tk.StringVar] = None
         self._panorama_mode_var: Optional[tk.StringVar] = None
-        self._camera_setup_refresh_button: Optional[ttk.Button] = None
         self._camera_setup_save_button: Optional[ttk.Button] = None
         self._camera_discovery_running = False
         self._camera_setup_image_labels: dict[str, ttk.Label] = {}
@@ -381,14 +380,10 @@ class App:
 
         button_frame = ttk.Frame(self._camera_setup_window)
         button_frame.pack(anchor="w", padx=15, pady=(0, 10))
-        self._camera_setup_refresh_button = ttk.Button(
-            button_frame, text="Refresh All", command=self._start_camera_discovery
-        )
-        self._camera_setup_refresh_button.pack(side="left", padx=(0, 5))
         self._camera_setup_save_button = ttk.Button(
             button_frame, text="Save Order", command=self._save_camera_setup_order
         )
-        self._camera_setup_save_button.pack(side="left", padx=5)
+        self._camera_setup_save_button.pack(side="left", padx=(0, 5))
         ttk.Button(button_frame, text="Cancel", command=self._close_camera_setup_window).pack(side="left", padx=5)
 
         # Ribbon cam (QR scanner) needs a real live view for fine focus/position adjustment. Opens as a separate process.
@@ -455,15 +450,12 @@ class App:
         self._camera_setup_slots_frame = None
         self._camera_setup_status_var = None
         self._panorama_mode_var = None
-        self._camera_setup_refresh_button = None
         self._camera_setup_save_button = None
         self.tray_table.focus_set()
 
     def _update_camera_setup_buttons(self) -> None:
-        """Refresh/Save are disabled while a search is running; Save also
-        while there's nothing to save (no cameras found)."""
-        if self._camera_setup_refresh_button is not None:
-            self._camera_setup_refresh_button.state(["disabled" if self._camera_discovery_running else "!disabled"])
+        """Save is disabled while the search is running and while there's
+        nothing to save (no cameras found)."""
         if self._camera_setup_save_button is not None:
             can_save = not self._camera_discovery_running and bool(self._camera_setup_order)
             self._camera_setup_save_button.state(["!disabled" if can_save else "disabled"])
@@ -471,8 +463,8 @@ class App:
     def _start_camera_discovery(self) -> None:
         """Searches for cameras and takes one preview frame from each of the permanently running
         streams. In a background thread, since a newly plugged-in camera needs a moment for its
-        first frame. Used on window open AND by Refresh All, so Refresh All also picks up newly
-        plugged-in cameras. Doesn't touch a running capture (the cameras stay open the whole time)."""
+        first frame. Runs every time the window is opened, so newly plugged-in cameras show up
+        by simply reopening Camera Setup. Doesn't touch a running capture (the cameras stay open the whole time)."""
         if self._camera_discovery_running:
             return
 
@@ -485,7 +477,7 @@ class App:
     def _camera_discovery_worker(self) -> None:
         """Runs in a background thread. ALWAYS reports back to the Tk
         main thread - otherwise _camera_discovery_running would stay True
-        and the Refresh button disabled forever."""
+        and the Save button disabled forever."""
         found: dict = {}
         error_message = None
         try:
@@ -705,7 +697,7 @@ class App:
         self._history_window.protocol("WM_DELETE_WINDOW", _on_close)
 
     def log_event(self, text: str, level: int = logging.INFO) -> None:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]   # with milliseconds, like the log file
         level_name = logging.getLevelName(level)
         entry = f"{timestamp} [{level_name}] {text}"
         self._log_entries.append(entry)

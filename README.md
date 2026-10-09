@@ -71,7 +71,7 @@ Reads/writes `inventory.txt`. Writes are crash-safe (temp file + `os.replace`). 
 - Searchable tray table; right-click → rename description
 - Image preview of the selected tray's latest capture, scaled to the size of the preview area; hold the left mouse button on the image for a magnifier
 - After a capture, only the affected table row (and its preview) is refreshed
-- Camera Setup (always available): live camera pictures (updated every `CAMERA_SETUP_PREVIEW_REFRESH_MS`, taken from the running streams), reorder via arrows, Refresh All re-discovers, picture mode stitch / side by side, live ribbon-cam preview
+- Camera Setup (always available): live camera pictures (updated every `CAMERA_SETUP_PREVIEW_REFRESH_MS`, taken from the running streams), reorder via arrows, newly plugged-in cameras are found every time the window is opened, picture mode stitch / side by side, live ribbon-cam preview
 
 ### Mock modules (Windows)
 `door_sensor_mock` (Enter toggles the door), `qr_code_scanner_mock` (always tray 1), `camera_stitching_mock` (webcams or placeholder images).

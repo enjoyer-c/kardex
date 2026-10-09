@@ -116,6 +116,11 @@ class App:
         # set from main.py - called when the user triggers a manual capture
         self.on_manual_capture: Optional[Callable[[str], None]] = None
 
+        # set from main.py - release / restart the ribbon cam stream around the live preview.
+        # ribbon_cam_restart returns None on success, otherwise an error text
+        self.ribbon_cam_release: Optional[Callable[[], None]] = None
+        self.ribbon_cam_restart: Optional[Callable[[], Optional[str]]] = None
+
         # TEMP door test: set from main.py - simulates a door open/close
         self.on_simulate_door: Optional[Callable[[], None]] = None
 
@@ -482,8 +487,6 @@ class App:
         error_message = None
         try:
             found = camera_setup.discover_cameras()
-        except camera_setup.CamerasBusyError as exc:
-            error_message = str(exc)
         except Exception as exc:
             logging.exception("Camera discovery crashed")
             error_message = f"Camera search failed: {exc}"
@@ -631,7 +634,9 @@ class App:
         self._close_camera_setup_window()
 
     def _launch_ribbon_cam_preview(self) -> None:
-        """Starts setup_ribbon_cam.py as a separate process"""
+        """Starts setup_ribbon_cam.py as a separate process. The program's own ribbon cam stream is
+        released for it (two programs can't use the camera at the same time) and restarted as soon
+        as the preview is closed - see _watch_ribbon_cam_preview."""
         # Only one preview at a time - poll() is None means "still running"
         if self._ribbon_cam_process is not None and self._ribbon_cam_process.poll() is None:
             messagebox.showinfo(
@@ -646,25 +651,50 @@ class App:
             )
             return
 
-        messagebox.showinfo(
+        if not messagebox.askokcancel(
             "Camera Setup",
             "Opens in a separate window. Close it with 'q' or the X.\n\n"
-            "While the preview is open, the ribbon cam can't scan QR codes - "
-            "it is closed automatically as soon as the next QR scan starts (door closes).",
+            "While the preview is open, NO automatic photos are taken - the preview needs the QR camera. "
+            "Automatic mode continues as soon as the preview is closed.",
             parent=self._camera_setup_window,
-        )
-        self._ribbon_cam_process = subprocess.Popen([sys.executable, str(script_path)])
+        ):
+            return
 
-    def close_ribbon_cam_preview(self) -> Optional[subprocess.Popen]:
-        """Called from main.py before every QR scan: the preview and the scan need the same camera.
-        Only SENDS the stop signal (doesn't wait, so the GUI never freezes) and returns the process,
-        so the scan thread can wait for it to really end. Returns None if no preview is running."""
+        if self.ribbon_cam_release:
+            self.ribbon_cam_release()
+        self._ribbon_cam_process = subprocess.Popen([sys.executable, str(script_path)])
+        self.log_event("Ribbon cam live preview opened - automatic photos paused", level=logging.WARNING)
+        self.set_error("ribbon_preview", "Ribbon cam live preview open - no automatic photos")
+        self.root.after(500, self._watch_ribbon_cam_preview)
+
+    def _watch_ribbon_cam_preview(self) -> None:
+        """Checks every 0.5 s whether the preview was closed - then the ribbon cam stream is restarted."""
         process = self._ribbon_cam_process
-        if process is None or process.poll() is not None:
-            return None
-        process.terminate()
+        if process is not None and process.poll() is None:
+            self.root.after(500, self._watch_ribbon_cam_preview)
+            return
         self._ribbon_cam_process = None
-        return process
+        # Restarting the camera takes about a second - in the background, so the GUI doesn't freeze
+        threading.Thread(target=self._ribbon_cam_restart_worker, daemon=True).start()
+
+    def _ribbon_cam_restart_worker(self) -> None:
+        error = None
+        try:
+            if self.ribbon_cam_restart:
+                error = self.ribbon_cam_restart()
+        except Exception as exc:
+            logging.exception("Ribbon cam restart crashed")
+            error = f"Ribbon cam could not be restarted: {exc}"
+        self.root.after(0, self._on_ribbon_cam_restarted, error)
+
+    def _on_ribbon_cam_restarted(self, error: Optional[str]) -> None:
+        self.clear_error("ribbon_preview")
+        if error:
+            self.log_event(error, level=logging.ERROR)
+            self.set_error("ribbon", "Ribbon cam (QR) not available - no automatic photos")
+        else:
+            self.clear_error("ribbon")
+            self.log_event("Ribbon cam live preview closed - automatic photos active again")
 
     # --- History (separate pop-up window) --------------------------------
 

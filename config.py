@@ -53,15 +53,15 @@ MAX_IMAGES_PER_TRAY = 3
 
 # --- QR-Code-Cam -----------------------------------------------------------
 QR_CAPTURE_SIZE = (1332, 990)   
-QR_SCAN_TIMEOUT_S = 6.0                 # max waiting time for QR-Code [s] - tray is already standing when the door closes
-QR_SCAN_INTERVAL_S = 0.1                # pause between two scan attempts [s]
+# The ribbon cam runs permanently. When the door opens, it looks for a QR code for at most this long -
+# the tray still stands ~2.5 s after the door opens, and the USB photos are already taken before the scan starts.
+QR_SCAN_WINDOW_S = 1.0
 
 # --- Door-Sensor -----------------------------------------------------------
 DOOR_SENSOR_GPIO = 17 #Pin11
 DOOR_SENSOR_BOUNCE_TIME_MS = 350
-
 # Direction of the contact. False: contact closed (magnet present) = door CLOSED.
-# True: the other way round (e.g. NC contact) -> Testen !!!!!!!!!!!!!
+# True: the other way round (e.g. NC contact) - live test 09.10.: door events were reported reversed
 DOOR_SENSOR_INVERTED = True
 
 # TEMP door test: shows a "TEST: Toggle Door" button in the GUI that

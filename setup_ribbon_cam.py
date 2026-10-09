@@ -2,9 +2,9 @@
 Live preview for the QR scanner for positioning the camera and checking QR placement/focus during physical setup.
 Shows the live feed with a green outline drawn around any QR code currently detected, plus its decoded content - so you can see in real
 time whether the QR is actually readable from the current position/angle/distance, not just guess from the raw image.
-"""
 
-import signal
+Started from Camera Setup in main.py, which releases its own ribbon cam stream for it and restarts it when this window closes.
+"""
 
 import cv2
 from pyzbar.pyzbar import decode
@@ -15,15 +15,7 @@ import config
 WINDOW_NAME = "Ribbon Cam - QR Setup (q or X = quit)"
 
 
-def _handle_sigterm(_signum, _frame) -> None:
-    """main.py closes this preview automatically before a QR scan (via terminate() = SIGTERM).
-    By default SIGTERM would end the process immediately - raising SystemExit instead lets the finally-block below run, so the camera is released cleanly."""
-    raise SystemExit(0)
-
-
 def main() -> None:
-    signal.signal(signal.SIGTERM, _handle_sigterm)
-
     picam = Picamera2()
     preview_config = picam.create_preview_configuration(
         main={"size": config.QR_CAPTURE_SIZE, "format": "RGB888"}

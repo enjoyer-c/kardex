@@ -1,9 +1,11 @@
 """
-Builds the final tray picture from the USB cameras. The cameras themselves stay open permanently (see camera_streams.py) -
-a capture only takes the newest frame of each camera, then stitches / places them side by side and saves the result.
+Builds the final tray picture from the USB cameras. The cameras themselves stay open permanently (see camera_streams.py).
+Two steps, so the photos can be taken FIRST and saved only once it's clear which tray they belong to (QR code):
+    grab_frames()      - newest frame of every camera, all at the same moment (fast, ~0.1 s)
+    combine_and_save() - stitch / side by side, save under the tray number
+capture_and_stitch() does both at once (manual capture, tray number is already known).
 """
 
-from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 import json
@@ -24,7 +26,13 @@ class StitchResult:
     error_message: str | None = None
     frames_taken_at: float | None = None   # time.monotonic() when the frames were taken (for the log)
 
-_capture_lock = threading.Lock()
+
+@dataclass
+class FrameSet:
+    """The frames of all cameras from one moment, in camera order."""
+    frames: list
+    taken_at: float        # time.monotonic() - for measuring the delay to the door signal
+    taken_wall: datetime   # wall-clock time - goes into the file name
 
 PANORAMA_MODES = ("stitch", "side_by_side")
 
@@ -64,22 +72,6 @@ def set_panorama_mode(mode: str) -> None:
         json.dump(settings, f, indent=2)
 
 
-class CamerasBusyError(RuntimeError):
-    """Raised by exclusive_cameras() if the cameras are already in use."""
-
-
-@contextmanager
-def exclusive_cameras():
-    """Makes sure only one capture runs at a time. Non-blocking: if a capture is already running,
-    CamerasBusyError is raised immediately instead of waiting."""
-    if not _capture_lock.acquire(blocking=False):
-        raise CamerasBusyError("A capture is already running")
-    try:
-        yield
-    finally:
-        _capture_lock.release()
-
-
 def create_tray_folders() -> None:
     """Creates one output folder per tray number, if it doesn't exist yet."""
     for tray_number in range(config.TRAY_LOWER_LIMIT, config.TRAY_UPPER_LIMIT + 1):
@@ -107,22 +99,12 @@ def _side_by_side(frames: list) -> "cv2.typing.MatLike":
     return cv2.hconcat(resized)
 
 
-def capture_and_stitch(camera_devices: list[str], tray_number: str) -> StitchResult:
-    """Takes the newest frame of each camera (all at the same moment), combines and saves them.
-    Refuses to run if another capture is already running."""
-    try:
-        with exclusive_cameras():
-            return _capture_and_stitch_locked(camera_devices, tray_number)
-    except CamerasBusyError as exc:
-        return StitchResult(success=False, error_message=str(exc))
-
-
-def _capture_and_stitch_locked(camera_devices: list[str], tray_number: str) -> StitchResult:
-    """The actual capture + stitch. Only ever called while exclusive_cameras() holds the camera lock (see capture_and_stitch)."""
+def grab_frames(camera_devices: list[str]) -> tuple[FrameSet | None, str | None]:
+    """Takes the newest frame of every camera from the running streams, all at (almost) the same moment.
+    Returns (FrameSet, None) or (None, error text)."""
     if not camera_devices:
-        return StitchResult(success=False, error_message="No USB cameras configured - please run Camera Setup")
+        return None, "No USB cameras configured - please run Camera Setup"
 
-    t_start = time.monotonic()
     # Cameras plugged in after startup get a stream now (then the first frame takes a moment)
     camera_streams.ensure(camera_devices)
 
@@ -134,11 +116,8 @@ def _capture_and_stitch_locked(camera_devices: list[str], tray_number: str) -> S
         except Exception as exc:
             results[index] = (None, f"Unexpected error on {device}: {exc}")
 
-    # One thread per camera, so all frames are decoded at (almost) the same moment
-    threads = [
-        threading.Thread(target=_worker, args=(i, device))
-        for i, device in enumerate(camera_devices)
-    ]
+    # One thread per camera, so all frames are decoded at the same moment
+    threads = [threading.Thread(target=_worker, args=(i, device)) for i, device in enumerate(camera_devices)]
     for t in threads:
         t.start()
     for t in threads:
@@ -147,39 +126,44 @@ def _capture_and_stitch_locked(camera_devices: list[str], tray_number: str) -> S
     frames = []
     for frame, error_message in results:
         if frame is None:
-            return StitchResult(success=False, error_message=error_message)
+            return None, error_message
         frames.append(frame)
-    t_frames = time.monotonic()
+    return FrameSet(frames=frames, taken_at=time.monotonic(), taken_wall=datetime.now()), None
 
+
+def combine_and_save(frame_set: FrameSet, tray_number: str) -> StitchResult:
+    """Combines the frames (stitch or side by side, see Camera Setup) and saves them under the tray number."""
+    t_start = time.monotonic()
     output_dir = config.OUTPUT_DIR / tray_number
     output_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime(config.TIMESTAMP_FORMAT)
 
     panorama_mode = get_panorama_mode()
     if panorama_mode == "stitch":
         stitcher = cv2.Stitcher_create(config.STITCHER_MODE)
         stitcher.setPanoConfidenceThresh(config.STICHER_CONFIDENCE_THRESHOLD)
-        status, panorama = stitcher.stitch(frames)
-
+        status, panorama = stitcher.stitch(frame_set.frames)
         if status != cv2.Stitcher_OK:
             return StitchResult(success=False, error_message=f"Stitching failed, status code: {status}")
     elif panorama_mode == "side_by_side":
-        panorama = _side_by_side(frames)
+        panorama = _side_by_side(frame_set.frames)
     else:
-        return StitchResult(success=False, error_message=f"Unknown PANORAMA_MODE in config: '{panorama_mode}'")
+        return StitchResult(success=False, error_message=f"Unknown picture mode: '{panorama_mode}'")
 
+    # File name = the moment the photos were TAKEN, not when saving finished
+    timestamp = frame_set.taken_wall.strftime(config.TIMESTAMP_FORMAT)
     pano_path = output_dir / f"finalFrame_{timestamp}.jpg"
-
-
     if not cv2.imwrite(str(pano_path), panorama):
         return StitchResult(success=False, error_message=f"Could not save image: {pano_path}")
 
     enforce_max_images(output_dir, config.MAX_IMAGES_PER_TRAY)
+    logging.info("  details: combining + saving took %.0f ms (%s)", (time.monotonic() - t_start) * 1000, panorama_mode)
 
-    # Timing in the log file - the photo moment is t_frames; stitching/saving afterwards doesn't matter for the tray position
-    logging.info(
-        "  details: frames from the streams in %.0f ms, combining + saving %.0f ms (%s)",
-        (t_frames - t_start) * 1000, (time.monotonic() - t_frames) * 1000, panorama_mode,
-    )
+    return StitchResult(success=True, panorama_path=pano_path, frames_taken_at=frame_set.taken_at)
 
-    return StitchResult(success=True, panorama_path=pano_path, frames_taken_at=t_frames)
+
+def capture_and_stitch(camera_devices: list[str], tray_number: str) -> StitchResult:
+    """Both steps at once - for the manual capture, where the tray number is already known."""
+    frame_set, error = grab_frames(camera_devices)
+    if frame_set is None:
+        return StitchResult(success=False, error_message=error)
+    return combine_and_save(frame_set, tray_number)

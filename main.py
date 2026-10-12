@@ -16,11 +16,11 @@ import camera_setup
 if sys.platform.startswith("win32"):
     import door_sensor_mock as door_sensor
     import qr_code_scanner_mock as qr_code_scanner
-    import camera_stitching_mock as camera_stitching
+    import camera_capture_mock as camera_capture
 else:
     import door_sensor
     import qr_code_scanner
-    import camera_stitching
+    import camera_capture
 
 config.LOG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -48,7 +48,7 @@ class DoorCapture:
     qr_data: str | None = None            # raw QR content (None = no QR code)
     qr_error: str | None = None           # ribbon cam failed
     tray_number: str | None = None        # valid, normalized tray number from the QR code
-    result: object = None                 # StitchResult if the photos were saved
+    result: object = None                 # CaptureResult if the photos were saved
     crash: str | None = None              # unexpected exception
 
 
@@ -139,7 +139,7 @@ class flow_controll:
         outcome = DoorCapture()
         try:
             # 1. USB photos - right now, before anything else
-            frame_set, outcome.photo_error = camera_stitching.grab_frames(camera_setup.get_camera_devices())
+            frame_set, outcome.photo_error = camera_capture.grab_frames(camera_setup.get_camera_devices())
             if frame_set is not None:
                 outcome.photo_delay_s = frame_set.taken_at - signal_time
 
@@ -160,7 +160,7 @@ class flow_controll:
 
             # 3. Save - only with photos AND a valid tray number, otherwise the photos are simply discarded
             if frame_set is not None and outcome.tray_number is not None:
-                outcome.result = camera_stitching.combine_and_save(frame_set, outcome.tray_number)
+                outcome.result = camera_capture.combine_and_save(frame_set, outcome.tray_number)
         except Exception as exc:
             logging.exception("Door capture crashed")
             outcome.crash = str(exc)
@@ -206,7 +206,7 @@ class flow_controll:
         """Common end of the door capture and the manual capture."""
         if result.success:
             self.app.clear_error("capture")
-            self.app.log_event(f"Capture saved for tray {tray_number}: {result.panorama_path.name}")
+            self.app.log_event(f"Capture saved for tray {tray_number}: {result.image_path.name}")
             self.app.update_tray_row(int(tray_number))   # only this tray's row gets refreshed
         else:
             self.app.set_error("capture", f"Last capture failed (tray {tray_number}) - see History")
@@ -226,10 +226,10 @@ class flow_controll:
 
     def _manual_capture_worker(self, tray_number: str) -> None:
         try:
-            result = camera_stitching.capture_and_stitch(camera_setup.get_camera_devices(), tray_number=tray_number)
+            result = camera_capture.capture_and_save(camera_setup.get_camera_devices(), tray_number=tray_number)
         except Exception as exc:
             logging.exception("Manual capture crashed")
-            result = camera_stitching.StitchResult(success=False, error_message=f"Capture crashed: {exc}")
+            result = camera_capture.CaptureResult(success=False, error_message=f"Capture crashed: {exc}")
         self.app.root.after(0, self._on_manual_capture_done, result, tray_number)
 
     def _on_manual_capture_done(self, result, tray_number: str) -> None:
@@ -260,7 +260,7 @@ def _handle_callback_exception(exc, val, tb) -> None:
 
 
 def main() -> None:
-    camera_stitching.create_tray_folders()
+    camera_capture.create_tray_folders()
 
     # Open all USB cameras NOW and keep them streaming - a capture then only takes the newest frame
     camera_setup.start_camera_streams()

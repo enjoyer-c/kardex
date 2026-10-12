@@ -47,6 +47,12 @@ import logging
 import camera_setup
 
 
+# The Pi taskbar finds a window's icon via its window NAME ("kardex" = kardex.desktop). The main window is called
+# "kardex" (className="Kardex" in main.py), popups would get "!toplevel" -> no icon. See App._new_popup.
+POPUP_WINDOW_NAME = "kardex"
+POPUP_WINDOW_CLASS = "Kardex"
+
+
 class _RenameDialog(simpledialog.Dialog):
     """Like simpledialog.askstring, but with a much wider entry field -
     the standard dialog's field is too short for longer descriptions."""
@@ -105,7 +111,13 @@ class App:
         self._camera_setup_photos: dict[str, ImageTk.PhotoImage] = {}
         self._camera_setup_slots_frame: Optional[ttk.Frame] = None
         self._camera_setup_status_var: Optional[tk.StringVar] = None
-        self._panorama_mode_var: Optional[tk.StringVar] = None
+        # Image alignment (Camera Setup): overlap per seam, vertical shift per camera (moves along when reordering)
+        self._seam_overlaps: list[int] = []
+        self._camera_shifts: dict[str, int] = {}
+        self._alignment_vars: list[tk.IntVar] = []   # keeps the spinbox variables alive (Tk forgets them otherwise)
+        self._camera_setup_seams_frame: Optional[ttk.Frame] = None
+        self._combined_preview_label: Optional[ttk.Label] = None
+        self._combined_preview_photo: Optional[ImageTk.PhotoImage] = None
         self._camera_setup_save_button: Optional[ttk.Button] = None
         self._camera_discovery_running = False
         self._camera_setup_image_labels: dict[str, ttk.Label] = {}
@@ -123,6 +135,9 @@ class App:
 
         # TEMP door test: set from main.py - simulates a door open/close
         self.on_simulate_door: Optional[Callable[[], None]] = None
+
+        # One invisible holder per popup - see _new_popup
+        self._popup_holders: dict[str, tk.Frame] = {}
 
         self._button_icons: dict[str, ImageTk.PhotoImage] = {}
         self._load_button_icons()
@@ -278,12 +293,12 @@ class App:
         capture manually - kept out of the main view since this is a
         fallback path, not something used in normal operation."""
 
+        # Already open -> close and open it again. On the Pi (Wayland) a program can't bring its own
+        # window to the front - a NEW window is always shown on top, though.
         if self._manual_capture_window is not None and self._manual_capture_window.winfo_exists():
-            self._manual_capture_window.lift()
-            self._manual_capture_window.focus_force()
-            return
+            self._manual_capture_window.destroy()
 
-        self._manual_capture_window = tk.Toplevel(self.root)
+        self._manual_capture_window = self._new_popup("manual_capture")
         self._manual_capture_window.title("Manual Capture")
         self._manual_capture_window.geometry("360x150")
         self._manual_capture_window.resizable(False, False)
@@ -353,22 +368,26 @@ class App:
 
     def _open_camera_setup_window(self) -> None:
         if self._camera_setup_window is not None and self._camera_setup_window.winfo_exists():
-            self._camera_setup_window.lift()
-            self._camera_setup_window.focus_force()
+            self._bring_to_front(self._camera_setup_window)
             return
 
         # Always allowed, in every state - a setup is usually done WITH the
-        # tray out, to check that the whole tray is in the picture. Collisions
-        # with a running capture are prevented by the camera lock instead.
+        # tray out, to check that the whole tray is in the picture. It only reads
+        # frames from the running streams, so it never disturbs a capture.
 
         # Start from the saved order - discovery results get merged into it
         # (cameras still connected keep their position, new ones are appended)
         self._camera_setup_order = camera_setup.load_camera_order()
         self._camera_setup_photos = {}
 
+        # Saved alignment: the shifts belong to the cameras in the saved order
+        overlaps, shifts = camera_setup.load_alignment()
+        self._seam_overlaps = list(overlaps)
+        self._camera_shifts = {device: shift for device, shift in zip(self._camera_setup_order, shifts)}
+
         # The window opens IMMEDIATELY - the camera search runs in the
         # background and fills in the slots once it's done
-        self._camera_setup_window = tk.Toplevel(self.root)
+        self._camera_setup_window = self._new_popup("camera_setup")
         self._camera_setup_window.title("Camera Setup")
         self._camera_setup_window.resizable(False, False)
 
@@ -379,14 +398,17 @@ class App:
         # by a window resize sometimes weren't redrawn until hovered.)
         ttk.Label(
             self._camera_setup_window,
-            text="Identify each camera by its picture, then use the arrows to set left-to-right order.",
+            text="1. Identify each camera by its picture and set the left-to-right order with the arrows.\n"
+                 "2. Adjust the overlaps and heights until the combined picture at the bottom looks continuous (red lines = seams).\n"
+                 "3. Save - applies from the next photo on.",
+            justify="left",
             font=("Arial", 11),
         ).pack(anchor="w", padx=15, pady=(15, 10))
 
         button_frame = ttk.Frame(self._camera_setup_window)
         button_frame.pack(anchor="w", padx=15, pady=(0, 10))
         self._camera_setup_save_button = ttk.Button(
-            button_frame, text="Save Order", command=self._save_camera_setup_order
+            button_frame, text="Save", command=self._save_camera_setup
         )
         self._camera_setup_save_button.pack(side="left", padx=(0, 5))
         ttk.Button(button_frame, text="Cancel", command=self._close_camera_setup_window).pack(side="left", padx=5)
@@ -397,27 +419,21 @@ class App:
             command=self._launch_ribbon_cam_preview,
         ).pack(side="left", padx=(25, 0))
 
-        # Picture mode: how the camera images are combined. Applies from the next capture on, saved immediately (no "Save Order" needed).
-        mode_frame = ttk.Frame(self._camera_setup_window)
-        mode_frame.pack(anchor="w", padx=15, pady=(0, 10))
-        ttk.Label(mode_frame, text="Picture mode:", font=("Arial", 10, "bold")).pack(side="left", padx=(0, 10))
-        self._panorama_mode_var = tk.StringVar(value=camera_setup.get_panorama_mode())
-        ttk.Radiobutton(
-            mode_frame, text="Stitch (panorama)", value="stitch",
-            variable=self._panorama_mode_var, command=self._on_panorama_mode_changed,
-        ).pack(side="left", padx=(0, 10))
-        ttk.Radiobutton(
-            mode_frame, text="Side by side", value="side_by_side",
-            variable=self._panorama_mode_var, command=self._on_panorama_mode_changed,
-        ).pack(side="left")
-
         self._camera_setup_status_var = tk.StringVar(value="")
         ttk.Label(
             self._camera_setup_window, textvariable=self._camera_setup_status_var, font=("Arial", 10, "italic")
         ).pack(anchor="w", padx=15, pady=(0, 10))
 
         self._camera_setup_slots_frame = ttk.Frame(self._camera_setup_window)
-        self._camera_setup_slots_frame.pack(anchor="w", padx=15, pady=(0, 15))
+        self._camera_setup_slots_frame.pack(anchor="w", padx=15, pady=(0, 10))
+
+        # Overlap per seam - filled by _render_camera_setup_slots, since it depends on the number of cameras
+        self._camera_setup_seams_frame = ttk.Frame(self._camera_setup_window)
+        self._camera_setup_seams_frame.pack(anchor="w", padx=15, pady=(0, 10))
+
+        # The combined picture exactly as it will be saved - updated live
+        self._combined_preview_label = ttk.Label(self._camera_setup_window, text="")
+        self._combined_preview_label.pack(anchor="w", padx=15, pady=(0, 15))
 
         self._camera_setup_window.protocol("WM_DELETE_WINDOW", self._close_camera_setup_window)
 
@@ -429,21 +445,6 @@ class App:
         else:
             self._start_camera_discovery()
 
-    def _on_panorama_mode_changed(self) -> None:
-        """Radio button clicked -> save the new picture mode right away."""
-        mode = self._panorama_mode_var.get()
-        try:
-            camera_setup.set_panorama_mode(mode)
-        except (ValueError, OSError) as exc:
-            # Not saved -> show the mode that's actually active again
-            self._panorama_mode_var.set(camera_setup.get_panorama_mode())
-            self.log_event(f"Picture mode could not be changed: {exc}", level=logging.ERROR)
-            messagebox.showerror("Camera Setup", f"Picture mode could not be saved:\n\n{exc}", parent=self._camera_setup_window)
-            return
-
-        mode_text = "stitch (panorama)" if mode == "stitch" else "side by side"
-        self.log_event(f"Picture mode changed to: {mode_text}")
-
     def _close_camera_setup_window(self) -> None:
         if self._camera_preview_after_id is not None:
             self.root.after_cancel(self._camera_preview_after_id)
@@ -454,8 +455,11 @@ class App:
         self._camera_setup_window = None
         self._camera_setup_slots_frame = None
         self._camera_setup_status_var = None
-        self._panorama_mode_var = None
         self._camera_setup_save_button = None
+        self._camera_setup_seams_frame = None
+        self._combined_preview_label = None
+        self._combined_preview_photo = None
+        self._alignment_vars = []
         self.tray_table.focus_set()
 
     def _update_camera_setup_buttons(self) -> None:
@@ -542,20 +546,42 @@ class App:
 
         self._camera_preview_fetch_running = True
         devices = list(self._camera_setup_order)
-        threading.Thread(target=self._camera_preview_worker, args=(devices,), daemon=True).start()
+        overlaps, shifts = self._current_alignment()
+        threading.Thread(
+            target=self._camera_preview_worker, args=(devices, overlaps, shifts), daemon=True
+        ).start()
 
-    def _camera_preview_worker(self, devices: list[str]) -> None:
+    def _camera_preview_worker(self, devices: list[str], overlaps: list[int], shifts: list[int]) -> None:
+        """Background thread: newest frame per camera + the combined picture with the CURRENT (unsaved) values."""
         frames: dict = {}
+        combined = None
+        combined_error = None
         try:
             frames = camera_setup.get_preview_frames(devices)
+            if devices and all(device in frames for device in devices):
+                combined = camera_setup.crop_and_combine(
+                    [frames[device] for device in devices], overlaps, shifts, show_seams=True
+                )
+            else:
+                combined_error = "Combined picture: waiting for all cameras ..."
+        except ValueError as exc:
+            combined_error = f"Combined picture not possible: {exc}"
         except Exception:
             logging.exception("Camera Setup live preview failed")
-        self.root.after(0, self._on_camera_previews_fetched, frames)
+        self.root.after(0, self._on_camera_previews_fetched, frames, combined, combined_error)
 
-    def _on_camera_previews_fetched(self, frames: dict) -> None:
+    def _on_camera_previews_fetched(self, frames: dict, combined=None, combined_error: Optional[str] = None) -> None:
         self._camera_preview_fetch_running = False
         if self._camera_setup_window is None or not self._camera_setup_window.winfo_exists():
             return
+
+        if self._combined_preview_label is not None:
+            if combined is not None:
+                self._combined_preview_photo = self._frame_to_photo(combined, max_size=(1250, 300))
+                self._combined_preview_label.configure(image=self._combined_preview_photo, text="")
+            elif combined_error:
+                self._combined_preview_photo = None
+                self._combined_preview_label.configure(image="", text=combined_error)
 
         for device, frame in frames.items():
             label = self._camera_setup_image_labels.get(device)
@@ -569,20 +595,53 @@ class App:
             self._schedule_camera_preview_refresh(config.CAMERA_SETUP_PREVIEW_REFRESH_MS)
 
     @staticmethod
-    def _frame_to_photo(frame) -> ImageTk.PhotoImage:
-        """cv2 frame (BGR) -> thumbnail for the setup slots. Must run in
-        the Tk main thread (PhotoImage isn't thread-safe)."""
+    def _frame_to_photo(frame, max_size: tuple[int, int] = (280, 210)) -> ImageTk.PhotoImage:
+        """cv2 frame (BGR) -> thumbnail. Must run in the Tk main thread (PhotoImage isn't thread-safe)."""
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         pil_image = Image.fromarray(rgb)
-        pil_image.thumbnail((280, 210))
+        pil_image.thumbnail(max_size)
         return ImageTk.PhotoImage(pil_image)
+
+    # --- Camera Setup: image alignment ---------------------------------------------
+
+    def _current_alignment(self) -> tuple[list[int], list[int]]:
+        """(overlap per seam, shift per camera) as currently set in the window, in the current camera order."""
+        seam_count = max(len(self._camera_setup_order) - 1, 0)
+        overlaps = (self._seam_overlaps + [0] * seam_count)[:seam_count]
+        shifts = [self._camera_shifts.get(device, 0) for device in self._camera_setup_order]
+        return overlaps, shifts
+
+    def _alignment_spinbox(self, parent, value: int, low: int, high: int, on_change: Callable[[int], None]) -> ttk.Spinbox:
+        """Number field with arrows (2 px steps). on_change gets the new value - also when typed in;
+        an invalid entry (empty, letters) is simply ignored until it's valid again."""
+        var = tk.IntVar(value=value)
+        self._alignment_vars.append(var)
+
+        def _changed(*_args) -> None:
+            try:
+                on_change(var.get())
+            except tk.TclError:
+                pass
+
+        var.trace_add("write", _changed)
+        return ttk.Spinbox(parent, from_=low, to=high, increment=2, width=6, textvariable=var)
+
+    def _set_seam_overlap(self, index: int, value: int) -> None:
+        while len(self._seam_overlaps) <= index:
+            self._seam_overlaps.append(0)
+        self._seam_overlaps[index] = value
+
+    def _set_camera_shift(self, device: str, value: int) -> None:
+        self._camera_shifts[device] = value
 
     def _render_camera_setup_slots(self) -> None:
         """Rebuilds the row of camera slots from self._camera_setup_order -
         called after any reorder, so the on-screen layout matches."""
-        for child in self._camera_setup_slots_frame.winfo_children():
-            child.destroy()
+        for frame in (self._camera_setup_slots_frame, self._camera_setup_seams_frame):
+            for child in frame.winfo_children():
+                child.destroy()
         self._camera_setup_image_labels = {}
+        self._alignment_vars = []
 
         for index, device in enumerate(self._camera_setup_order):
             slot = ttk.Frame(self._camera_setup_slots_frame, relief="groove", borderwidth=1, padding=10)
@@ -618,6 +677,26 @@ class App:
             if index == len(self._camera_setup_order) - 1:
                 right_button.state(["disabled"])
 
+            # Vertical shift of THIS camera - moves along with it when reordering
+            shift_frame = ttk.Frame(slot)
+            shift_frame.pack(pady=(6, 0))
+            ttk.Label(shift_frame, text="Height shift [px]:").pack(side="left", padx=(0, 5))
+            self._alignment_spinbox(
+                shift_frame, self._camera_shifts.get(device, 0), -200, 200,
+                lambda value, d=device: self._set_camera_shift(d, value),
+            ).pack(side="left")
+
+        # Overlap per seam (between two neighbouring positions)
+        overlaps, _shifts = self._current_alignment()
+        if overlaps:
+            ttk.Label(self._camera_setup_seams_frame, text="Overlap [px]:", font=("Arial", 10, "bold")).pack(side="left", padx=(0, 10))
+        for index, overlap in enumerate(overlaps):
+            ttk.Label(self._camera_setup_seams_frame, text=f"Seam {index + 1}|{index + 2}").pack(side="left", padx=(10, 5))
+            self._alignment_spinbox(
+                self._camera_setup_seams_frame, overlap, 0, 1200,
+                lambda value, i=index: self._set_seam_overlap(i, value),
+            ).pack(side="left")
+
     def _move_camera_setup_slot(self, index: int, direction: int) -> None:
         new_index = index + direction
         if not (0 <= new_index < len(self._camera_setup_order)):
@@ -626,11 +705,17 @@ class App:
         order[index], order[new_index] = order[new_index], order[index]
         self._render_camera_setup_slots()
 
-    def _save_camera_setup_order(self) -> None:
-        # No need to update anything else - captures read the saved
-        # order fresh via camera_setup.get_camera_devices()
-        camera_setup.save_camera_order(self._camera_setup_order)
-        self.log_event("Camera order updated via Camera Setup")
+    def _save_camera_setup(self) -> None:
+        """Saves the camera order and the image alignment. Captures read both fresh, so they apply to the next photo."""
+        overlaps, shifts = self._current_alignment()
+        try:
+            camera_setup.save_camera_order(self._camera_setup_order)
+            camera_setup.save_alignment(overlaps, shifts)
+        except OSError as exc:
+            self.log_event(f"Camera Setup could not be saved: {exc}", level=logging.ERROR)
+            messagebox.showerror("Camera Setup", f"Could not be saved:\n\n{exc}", parent=self._camera_setup_window)
+            return
+        self.log_event(f"Camera Setup saved - overlaps {overlaps} px, height shifts {shifts} px")
         self._close_camera_setup_window()
 
     def _launch_ribbon_cam_preview(self) -> None:
@@ -698,21 +783,53 @@ class App:
 
     # --- History (separate pop-up window) --------------------------------
 
+    def _new_popup(self, key: str) -> tk.Toplevel:
+        """Creates a popup window named "kardex", so the taskbar shows the Kardex icon for it too.
+        Tk doesn't allow two windows with the same name under the same parent - so every popup gets its
+        own invisible holder frame (never packed) as parent. The popup itself is a normal, independent window."""
+        holder = self._popup_holders.get(key)
+        if holder is None:
+            holder = tk.Frame(self.root, name=f"{key}_holder")
+            self._popup_holders[key] = holder
+        return tk.Toplevel(holder, name=POPUP_WINDOW_NAME, class_=POPUP_WINDOW_CLASS)
+
+    @staticmethod
+    def _bring_to_front(window: tk.Toplevel) -> None:
+        """Tries to bring a popup in front of everything: restore it, put it on top for a moment, then back to
+        normal (otherwise it would stay on top forever). Works on Windows; on the Pi (Wayland) the desktop
+        ignores it - programs aren't allowed to bring their own windows to the front there."""
+        window.deiconify()
+        window.lift()
+        window.attributes("-topmost", True)
+        window.after(200, lambda: window.winfo_exists() and window.attributes("-topmost", False))
+        window.focus_force()
+
     def _open_history_window(self) -> None:
+        # Already open -> close and open it again (same reason as Manual Capture - the content
+        # is rebuilt from the log entries anyway, so nothing gets lost)
         if self._history_window is not None and self._history_window.winfo_exists():
-            self._history_window.lift()
-            self._history_window.focus_force()
-            return
+            self._history_window.destroy()
 
-        self._history_window = tk.Toplevel(self.root)
+        self._history_window = self._new_popup("history")
         self._history_window.title("History")
-        self._history_window.geometry("700x400")
-        self._history_window.lift()
-        self._history_window.attributes("-topmost", True)
-        self._history_window.after(200, lambda: self._history_window.attributes("-topmost", False))
+        # Wide enough for long entries (error messages with device paths)
+        self._history_window.geometry("1300x500")
+        self._bring_to_front(self._history_window)
 
-        self._history_listbox = tk.Listbox(self._history_window, font=("Consolas", 10))
-        self._history_listbox.pack(padx=10, pady=10, fill="both", expand=True)
+        list_frame = ttk.Frame(self._history_window)
+        list_frame.pack(padx=10, pady=10, fill="both", expand=True)
+        # Monospace font, so the timestamps line up - Consolas only exists on Windows
+        mono_font = ("Consolas", 10) if sys.platform.startswith("win32") else ("DejaVu Sans Mono", 10)
+        self._history_listbox = tk.Listbox(list_frame, font=mono_font)
+        # Scrollbars: vertical for many entries, horizontal for entries that are still too long
+        y_scroll = ttk.Scrollbar(list_frame, orient="vertical", command=self._history_listbox.yview)
+        x_scroll = ttk.Scrollbar(list_frame, orient="horizontal", command=self._history_listbox.xview)
+        self._history_listbox.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+        self._history_listbox.grid(row=0, column=0, sticky="nsew")
+        y_scroll.grid(row=0, column=1, sticky="ns")
+        x_scroll.grid(row=1, column=0, sticky="ew")
+        list_frame.grid_rowconfigure(0, weight=1)
+        list_frame.grid_columnconfigure(0, weight=1)
 
         for entry in self._log_entries:
             self._history_listbox.insert(tk.END, entry)

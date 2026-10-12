@@ -25,7 +25,7 @@ else:
 # Saved left-to-right camera order. Loading it lives in camera_setup.py - see camera_setup.get_camera_devices()
 CAMERA_ORDER_FILE = BASE_DIR / "camera_order.json"
 
-# Settings changed via the GUI (currently: picture mode stitch / side by side)
+# Settings changed via the GUI (currently: image alignment from Camera Setup)
 SETTINGS_FILE = BASE_DIR / "settings.json"
 
 USB_CAMERA_FOURCC = "MJPG"
@@ -38,16 +38,12 @@ USB_CAMERA_RECONNECT_S = 2.0            # pause before a lost/unplugged camera i
 USB_CAMERA_FIRST_FRAME_TIMEOUT_S = 5.0  # max wait for the first frame of a JUST started stream [s]
 CAMERA_SETUP_PREVIEW_REFRESH_MS = 500   # how often the Camera Setup window updates its camera pictures [ms]
 
-# --- Stitching -------------------------------------------------------------
-# How the single camera images are combined into one picture:
-#   "stitch"       - OpenCV stitcher (removes overlaps, can fail on low-texture images, e.g. an empty tray)
-#   "side_by_side" - images simply placed next to each other in camera order (never fails, fast)
-# Can be switched in the Camera Setup window - the choice is saved in SETTINGS_FILE.
-# This value is only the default, used until a choice has been saved there.
-PANORAMA_MODE = "stitch"
-
-STITCHER_MODE = cv2.Stitcher_SCANS      #vaible modes: SCANS or PANORAMA
-STICHER_CONFIDENCE_THRESHOLD = 0.5      #Default = 1.0
+# --- Combining the camera images --------------------------------------------
+# Overlap per seam between neighbouring cameras (one value less than cameras) and vertical shift per camera
+# (positive = picture moves down) - see camera_capture.py. These are only the defaults: the values set in the
+# Camera Setup window are saved in SETTINGS_FILE and used from then on.
+SEAM_OVERLAP_PX = [390, 410, 520]
+VERTICAL_SHIFT_PX = [0, -20, -2, -2]
 
 MAX_IMAGES_PER_TRAY = 3
 

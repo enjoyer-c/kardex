@@ -1,6 +1,6 @@
 # Kardex Shuttle Logistics System
 
-Automated high-bay warehouse add-on: a door sensor detects door movement, a ribbon camera identifies the tray via QR code, USB cameras capture the tray contents (stitched or side by side), and a GUI provides a searchable inventory with image preview.
+Automated high-bay warehouse add-on: a door sensor detects door movement, a ribbon camera identifies the tray via QR code, USB cameras capture the tray contents (cropped at the overlaps and put side by side), and a GUI provides a searchable inventory with image preview.
 
 Runs on a Raspberry Pi 4 and on Windows with mock modules for development.
 
@@ -38,7 +38,7 @@ Flow control + wiring between hardware and GUI.
 - Logging: rotating log file (5 MB, 3 backups), timestamps with milliseconds
 
 ### config.py
-All constants, platform-aware: paths (captures and logs on the external SSD), GPIO pin and direction of the door sensor (`DOOR_SENSOR_INVERTED`), camera resolution, default picture mode (`PANORAMA_MODE`) and stitching settings, QR scan window, tray limits (1-50), magnifier size/zoom
+All constants, platform-aware: paths (captures and logs on the external SSD), GPIO pin and direction of the door sensor (`DOOR_SENSOR_INVERTED`), camera resolution, default image alignment (`SEAM_OVERLAP_PX`, `VERTICAL_SHIFT_PX`), QR scan window, tray limits (1-50), magnifier size/zoom
 
 ### qr_code_scanner.py
 Ribbon camera via picamera2 + pyzbar. Runs permanently (`start_stream()` at startup); `scan_now()` only reads the newest frames until a QR code is found or `QR_SCAN_WINDOW_S` is over. `stop_stream()` releases the camera for the live preview and at program end.
@@ -48,11 +48,11 @@ Ribbon camera via picamera2 + pyzbar. Runs permanently (`start_stream()` at star
 - A capture only decodes the newest frame (`retrieve()`) - a few milliseconds instead of seconds for opening + warming up, and the exposure is always settled
 - Frames older than `USB_CAMERA_MAX_FRAME_AGE_S` are never used; a camera that stops delivering is reopened automatically every `USB_CAMERA_RECONNECT_S`
 
-### camera_stitching.py
-- Two steps: `grab_frames()` takes the newest frame of every camera from the streams, all at the same moment; `combine_and_save()` combines and saves them once the tray number is known. `capture_and_stitch()` = both at once (manual capture)
-- The file name is the moment the photos were taken, not when saving finished
-- Picture mode: OpenCV stitcher (panorama) or images side by side in camera order - chosen in the Camera Setup window, saved in `settings.json`
-- Result saved as `OUTPUT_DIR/<tray>/finalFrame_<timestamp>.jpg`; save failures are detected; max. `MAX_IMAGES_PER_TRAY` images per tray (oldest deleted)
+### camera_capture.py
+- Two steps: `grab_frames()` takes the newest frame of every camera from the streams, all at the same moment; `combine_and_save()` combines and saves them once the tray number is known. `capture_and_save()` = both at once (manual capture)
+- Combining: one overlap value per seam - half of it is cut off each of the two neighbouring cameras, the outer edges stay, so the picture stays centered. Plus a vertical shift per camera. Values from Camera Setup (`settings.json`), defaults in `config.py`
+- If the values don't fit the cameras (e.g. one is missing), the images are saved side by side uncut, with a warning in the log
+- Result saved as `OUTPUT_DIR/<tray>/finalFrame_<timestamp>.jpg` (timestamp = moment the photos were taken); max. `MAX_IMAGES_PER_TRAY` images per tray (oldest deleted)
 
 ### camera_setup.py
 - Finds cameras via `/dev/v4l/by-path` (by-id collides for identical models like two C920s), duplicates removed
@@ -72,10 +72,10 @@ Reads/writes `inventory.txt`. Writes are crash-safe (temp file + `os.replace`). 
 - Searchable tray table; right-click → rename description
 - Image preview of the selected tray's latest capture, scaled to the size of the preview area; hold the left mouse button on the image for a magnifier
 - After a capture, only the affected table row (and its preview) is refreshed
-- Camera Setup (always available): live camera pictures (updated every `CAMERA_SETUP_PREVIEW_REFRESH_MS`, taken from the running streams), reorder via arrows, newly plugged-in cameras are found every time the window is opened, picture mode stitch / side by side, live ribbon-cam preview (separate window; the program releases the ribbon cam for it and restarts it when the preview is closed - no automatic photos meanwhile)
+- Camera Setup (always available): live camera pictures (updated every `CAMERA_SETUP_PREVIEW_REFRESH_MS`, taken from the running streams), reorder via arrows, newly plugged-in cameras are found every time the window is opened, image alignment (overlap per seam, height shift per camera) with a live preview of the combined picture, live ribbon-cam preview (separate window; the program releases the ribbon cam for it and restarts it when the preview is closed - no automatic photos meanwhile)
 
 ### Mock modules (Windows)
-`door_sensor_mock` (Enter toggles the door), `qr_code_scanner_mock` (always tray 1), `camera_stitching_mock` (only replaces grabbing the frames - webcams or placeholder images; combining and saving is the real code).
+`door_sensor_mock` (Enter toggles the door), `qr_code_scanner_mock` (always tray 1), `camera_capture_mock` (only replaces grabbing the frames - webcams or placeholder images; combining and saving is the real code).
 
 ---
 

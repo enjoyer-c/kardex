@@ -8,11 +8,12 @@ import sys
 import time
 
 import config
-import camera_stitching
+import camera_capture
 import camera_streams
-# Re-exported, so the GUI can use them without importing camera_stitching
-get_panorama_mode = camera_stitching.get_panorama_mode
-set_panorama_mode = camera_stitching.set_panorama_mode
+# Re-exported, so the GUI can use them without importing camera_capture
+load_alignment = camera_capture.load_alignment
+save_alignment = camera_capture.save_alignment
+crop_and_combine = camera_capture.crop_and_combine
 
 
 def _connected_camera_paths() -> list[str]:

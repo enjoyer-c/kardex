@@ -1,5 +1,5 @@
 """
-Door sensor module for detecting whether the door of the kardex shuttle is open or closed.
+Door sensor module (Door open/close)
 Calls the optional on_change callback with a bool (True = open) on every state change.
 """
 
@@ -59,7 +59,9 @@ class DoorSensor:
     def is_open(self) -> bool:
         return self._is_open
 
-    # --- TEMP door test (remove together with config.DOOR_TEST_BUTTON) ---
+
+
+    # --- TEMP door test ---
     def simulate_toggle(self) -> None:
         """TEMPORARY, for testing without a magnet: flips the door state
         and fires on_change exactly like a real sensor event would.

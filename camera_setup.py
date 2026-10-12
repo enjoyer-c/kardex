@@ -10,7 +10,7 @@ import time
 import config
 import camera_capture
 import camera_streams
-# Re-exported, so the GUI can use them without importing camera_capture
+
 load_seam_overlaps = camera_capture.load_seam_overlaps
 save_seam_overlaps = camera_capture.save_seam_overlaps
 crop_and_combine = camera_capture.crop_and_combine
@@ -58,7 +58,7 @@ def stop_camera_streams() -> None:
 def discover_cameras(max_cameras: int = 4) -> dict[str, "cv2.typing.MatLike"]:
     """Returns {device path: preview frame} for all connected USB cameras that deliver frames, in discovery order.
 
-    Takes the frames from the permanently running streams - no camera is opened or closed here, so this
+    Takes the frames from the permanently running streams. no camera is opened or closed here, so this
     doesn't disturb a capture and is fast. Newly plugged-in cameras get a stream, unplugged ones lose theirs.
     Only waits (up to USB_CAMERA_FIRST_FRAME_TIMEOUT_S) for streams that were just started.
     """

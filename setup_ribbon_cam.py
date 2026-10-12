@@ -1,7 +1,6 @@
 """
-Live preview for the QR scanner for positioning the camera and checking QR placement/focus during physical setup.
-Shows the live feed with a green outline drawn around any QR code currently detected, plus its decoded content - so you can see in real
-time whether the QR is actually readable from the current position/angle/distance, not just guess from the raw image.
+Live preview for the QR scanner.
+Shows the live feed with a green outline drawn around any QR code currently detected.
 
 Started from Camera Setup in main.py, which releases its own ribbon cam stream for it and restarts it when this window closes.
 """
@@ -49,8 +48,7 @@ def main() -> None:
 
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
-            # X button: closing the window only hides it - the loop would keep running and block the camera.
-            # getWindowProperty reports < 1 once the window was closed.
+
             if cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_VISIBLE) < 1:
                 break
     finally:

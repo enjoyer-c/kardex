@@ -1,18 +1,7 @@
 """
 Keeps every USB camera open permanently and continuously pulls frames in the background.
 
-Why: opening a camera (driver init, format negotiation) plus letting exposure settle takes
-several seconds. Done at the moment the door opens, the tray was already gone by the time the
-picture was taken. Here every camera is opened ONCE (program start / Camera Setup) and a
-background thread per camera keeps grabbing frames. Taking a photo is then only "decode the
-newest frame" - a few milliseconds, and exposure is always already settled.
-
-grab() only fetches the raw frame from the driver (cheap, no decoding), retrieve() decodes it.
-So the background threads cost little CPU - only the frames that are actually used get decoded.
-
-If a camera stops delivering (unplugged, USB error), its thread closes it and keeps trying to
-reopen it every USB_CAMERA_RECONNECT_S. A frame older than USB_CAMERA_MAX_FRAME_AGE_S is never
-handed out, so a stuck camera can never produce an outdated photo.
+grab() only fetches the raw frame from the driver, retrieve() decodes it.
 """
 
 from __future__ import annotations
@@ -154,8 +143,7 @@ def stop_all() -> None:
 
 
 def get_frame(device: str, wait_s: float = 0.0) -> tuple["cv2.typing.MatLike | None", str | None]:
-    """Newest frame of one camera. With wait_s > 0, waits that long for a first fresh frame
-    (only needed right after a stream was started - a running stream answers immediately)."""
+    """Newest frame of one camera. With wait_s > 0, waits that long for a first fresh frame"""
     with _streams_lock:
         stream = _streams.get(device)
     if stream is None:

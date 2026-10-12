@@ -29,13 +29,13 @@ The very first sensor report after program start is only logged ("Door state at 
 
 ### main.py
 Flow control + wiring between hardware and GUI.
-- One rule only (see Process Flow); no status display - what happened is visible in the History, the "Last Capture" column and the red error banner
+- One rule only (see Process Flow); 
 - The door capture (photos → QR → save/discard) runs in a background thread; the result is always passed back to the Tk main thread, even if the thread crashes
 - Starts the ribbon cam stream at startup; the Camera Setup live preview releases it and restarts it afterwards
-- Every door signal is logged with milliseconds (`===== DOOR OPENED =====`), plus how long after the signal the photos were taken
+- Every door signal is logged (`===== DOOR OPENED =====`), plus how long after the signal the photos were taken
 - Manual capture: allowed any time except while another capture is running
 - Startup checks: door sensor, ribbon cam and USB cameras - problems are shown in the red error banner and the History; a warning is logged if the saved camera order doesn't match the connected cameras
-- Logging: rotating log file (5 MB, 3 backups), timestamps with milliseconds
+- Logging: rotating log file (5 MB, 3 backups), timestamps
 
 ### config.py
 All constants, platform-aware: paths (captures and logs on the external SSD), GPIO pin and direction of the door sensor (`DOOR_SENSOR_INVERTED`), camera resolution, default seam overlaps (`SEAM_OVERLAP_PX`), QR scan window, tray limits (1-50), magnifier size/zoom
@@ -44,35 +44,35 @@ All constants, platform-aware: paths (captures and logs on the external SSD), GP
 Ribbon camera via picamera2 + pyzbar. Runs permanently (`start_stream()` at startup); `scan_now()` only reads the newest frames until a QR code is found or `QR_SCAN_WINDOW_S` is over. `stop_stream()` releases the camera for the live preview and at program end.
 
 ### camera_streams.py
-- Every USB camera stays open permanently: one background thread per camera continuously grabs frames (`grab()`, cheap - no decoding)
-- A capture only decodes the newest frame (`retrieve()`) - a few milliseconds instead of seconds for opening + warming up, and the exposure is always settled
+- Every USB camera stays open permanently: one background thread per camera continuously grabs frames (`grab()`)
+- A capture only decodes the newest frame (`retrieve()`) in a few milliseconds instead of seconds for opening + warming up, and the exposure is always settled
 - Frames older than `USB_CAMERA_MAX_FRAME_AGE_S` are never used; a camera that stops delivering is reopened automatically every `USB_CAMERA_RECONNECT_S`
 
 ### camera_capture.py
 - Two steps: `grab_frames()` takes the newest frame of every camera from the streams, all at the same moment; `combine_and_save()` combines and saves them once the tray number is known. `capture_and_save()` = both at once (manual capture)
-- Combining: one overlap value per seam - half of it is cut off each of the two neighbouring cameras, the outer edges stay, so the picture stays centered. Values from Camera Setup (`settings.json`), defaults in `config.py`
+- Combining: one overlap value per seam. Half of it is cut off each of the two neighbouring cameras, the outer edges stay, so the picture stays centered. Values from Camera Setup (`settings.json`), defaults in `config.py`
 - If the values don't fit the cameras (e.g. one is missing), the images are saved side by side uncut, with a warning in the log
-- Result saved as `OUTPUT_DIR/<tray>/finalFrame_<timestamp>.jpg` (timestamp = moment the photos were taken); max. `MAX_IMAGES_PER_TRAY` images per tray (oldest deleted)
+- Result saved as `OUTPUT_DIR/<tray>/finalFrame_<timestamp>.jpg`, max images per tray (oldest deleted) `MAX_IMAGES_PER_TRAY` 
 
 ### camera_setup.py
-- Finds cameras via `/dev/v4l/by-path` (by-id collides for identical models like two C920s), duplicates removed
+- Finds cameras via `/dev/v4l/by-path` (by-id collides for identical models like two C920s)
 - `get_camera_devices()`: saved order from `camera_order.json`, fallback: all connected cameras
 - `start_camera_streams()` / `stop_camera_streams()`: called at program start / end
 - `discover_cameras()`: starts streams for newly plugged-in cameras, stops the ones of unplugged cameras, and returns one frame per camera as preview - no camera is opened or closed for it
 - `check_saved_order()`: startup check whether the saved order still matches
 
 ### door_sensor.py
-Door sensor via GPIO (`pull_up=True`). Which pin level means "door open" depends on the sensor - set with `DOOR_SENSOR_INVERTED` in `config.py` and check it in the History (`===== DOOR OPENED =====` must appear when the door really opens). The test sensor (reed contact) and the sensor at the lift (3-wire module) can behave differently. Reports its initial state on startup. If gpiozero or the GPIO pin isn't available, the program still starts and `error_message` is set.
+Door sensor via GPIO (`pull_up=True`). Which pin level means "door open" depends on the sensor, set with `DOOR_SENSOR_INVERTED` in `config.py` and check it in the History (`===== DOOR OPENED =====` must appear when the door really opens). The test sensor (reed contact) and the sensor at the lift (3-wire module) can behave differently. Reports its initial state on startup. If gpiozero or the GPIO pin isn't available, the program still starts and `error_message` is set.
 
 ### inventory.py
 Reads/writes `inventory.txt`. Writes are crash-safe (temp file + `os.replace`). `normalize_tray_number()` accepts only plain integers within the tray limits (`"01"` → `"1"`).
 
 ### gui.py
-- Red error banner for problems (sensor, cameras, failed scan/capture) - no status display
+- Red error banner for problems (sensor, cameras, failed scan/capture)
 - Searchable tray table; right-click → rename description
 - Image preview of the selected tray's latest capture, scaled to the size of the preview area; hold the left mouse button on the image for a magnifier
 - After a capture, only the affected table row (and its preview) is refreshed
-- Camera Setup (always available): live camera pictures (updated every `CAMERA_SETUP_PREVIEW_REFRESH_MS`, taken from the running streams), reorder via arrows, newly plugged-in cameras are found every time the window is opened, overlap per seam with a live preview of the combined picture (red seam lines only in the preview, not in saved photos), live ribbon-cam preview (separate window; the program releases the ribbon cam for it and restarts it when the preview is closed - no automatic photos meanwhile)
+- Camera Setup (always available): live camera pictures (updated every `CAMERA_SETUP_PREVIEW_REFRESH_MS`, taken from the running streams), reorder via arrows, newly plugged-in cameras are found every time the window is opened, overlap per seam with a live preview of the combined picture (red seam lines only in the preview, not in saved photos), live ribbon-cam preview (separate window; the program releases the ribbon cam for it and restarts it when the preview is closed)
 
 ### Mock modules (Windows)
 `door_sensor_mock` (Enter toggles the door), `qr_code_scanner_mock` (always tray 1), `camera_capture_mock` (only replaces grabbing the frames - webcams or placeholder images; combining and saving is the real code).
@@ -80,10 +80,9 @@ Reads/writes `inventory.txt`. Writes are crash-safe (temp file + `os.replace`). 
 ---
 
 ## Known Limitations
-
 - A disconnected sensor cable can't be detected by software (reads like a door state)
-- The QR code must be readable right when the door opens (within `QR_SCAN_WINDOW_S`) - focus and light of the ribbon cam matter
 - While the ribbon cam live preview is open, no automatic photos are taken (red banner)
+---
+Temp + Mock:
 - The Windows QR mock always returns tray 1, so "tray gone" can't be tested on Windows
 - Temporary Buttons and functions
-- All USB cameras stream permanently - with many cameras on one USB controller the bandwidth can run out (camera fails to open). Then lower `USB_CAMERA_FPS` or spread the cameras over different USB ports

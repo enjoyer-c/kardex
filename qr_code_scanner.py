@@ -1,10 +1,8 @@
 """
 Ribbon camera (Raspberry Pi HQ Camera) for QR code scanning, via picamera2 + pyzbar.
 
-The camera runs permanently (start_stream at program start). A scan only takes the newest
-frames and decodes them - no camera start, no waiting for exposure.
-Only the ribbon-cam live preview (Camera Setup) stops the stream for a while, because two
-programs can't use the camera at the same time - see stop_stream / start_stream.
+The camera runs permanently (start_stream at program start). A scan only takes the newes frames and decodes them.
+Only the ribbon-cam live preview (Camera Setup) stops the stream for a while.
 """
 
 from dataclasses import dataclass
@@ -37,8 +35,7 @@ _lock = threading.Lock()   # start / stop / scan never at the same time
 
 
 def start_stream() -> Optional[str]:
-    """Opens the ribbon camera and keeps it running. Returns None on success, otherwise an error text.
-    Does nothing if it's already running."""
+    """Opens the ribbon camera and keeps it running. Returns None on success, otherwise an error text. Does nothing if it's already running."""
     global _picam
     if not HAS_PICAMERA:
         return "picamera2 is not installed - trays can't be detected"
@@ -59,7 +56,7 @@ def start_stream() -> Optional[str]:
 
 
 def stop_stream() -> None:
-    """Releases the ribbon camera (e.g. for the live preview or at program end)."""
+    """Releases the ribbon camera."""
     global _picam
     with _lock:
         if _picam is None:

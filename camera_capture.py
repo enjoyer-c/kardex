@@ -1,5 +1,5 @@
 """
-Builds the final tray picture from the USB cameras. The cameras themselves stay open permanently (see camera_streams.py).
+Builds the final tray picture from the USB cameras. The cameras themselves stay open permanently.
 Two steps, so the photos can be taken FIRST and saved only once it's clear which tray they belong to (QR code):
     grab_frames()      - newest frame of every camera, all at the same moment (fast, ~0.1 s)
     combine_and_save() - crop the overlaps, put the images side by side, save under the tray number
@@ -67,7 +67,7 @@ def load_seam_overlaps() -> list[int]:
 
 
 def save_seam_overlaps(overlaps: list[int]) -> None:
-    """Saves the overlaps from Camera Setup. Other keys in the settings file are kept. Raises OSError if it can't be written."""
+    """Saves the overlaps from Camera Setup. Other keys in the settings file are kept."""
     settings = _read_settings()
     settings["seam_overlap_px"] = [int(v) for v in overlaps]
     config.SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -84,7 +84,7 @@ def crop_and_combine(frames: list, overlaps: list[int], show_seams: bool = False
     if len(overlaps) != len(frames) - 1:
         raise ValueError(f"{len(frames)} cameras need {len(frames) - 1} overlap values, got {len(overlaps)}")
 
-    height = min(frame.shape[0] for frame in frames)   # hconcat needs equal heights (all cameras use the same resolution anyway)
+    height = min(frame.shape[0] for frame in frames)   # hconcat needs equal heights
     cropped = []
     for i, frame in enumerate(frames):
         width = frame.shape[1]

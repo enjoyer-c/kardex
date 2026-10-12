@@ -25,7 +25,7 @@ else:
 # Saved left-to-right camera order. Loading it lives in camera_setup.py - see camera_setup.get_camera_devices()
 CAMERA_ORDER_FILE = BASE_DIR / "camera_order.json"
 
-# Settings changed via the GUI (currently: image alignment from Camera Setup)
+# Settings changed via the GUI (currently: seam overlaps from Camera Setup)
 SETTINGS_FILE = BASE_DIR / "settings.json"
 
 USB_CAMERA_FOURCC = "MJPG"
@@ -39,11 +39,9 @@ USB_CAMERA_FIRST_FRAME_TIMEOUT_S = 5.0  # max wait for the first frame of a JUST
 CAMERA_SETUP_PREVIEW_REFRESH_MS = 500   # how often the Camera Setup window updates its camera pictures [ms]
 
 # --- Combining the camera images --------------------------------------------
-# Overlap per seam between neighbouring cameras (one value less than cameras) and vertical shift per camera
-# (positive = picture moves down) - see camera_capture.py. These are only the defaults: the values set in the
-# Camera Setup window are saved in SETTINGS_FILE and used from then on.
+# Overlap per seam between neighbouring cameras in pixels (one value less than cameras) - see camera_capture.py.
+# These are only the defaults: the values set in the Camera Setup window are saved in SETTINGS_FILE and used from then on.
 SEAM_OVERLAP_PX = [390, 410, 520]
-VERTICAL_SHIFT_PX = [0, -20, -2, -2]
 
 MAX_IMAGES_PER_TRAY = 3
 

@@ -38,7 +38,7 @@ Flow control + wiring between hardware and GUI.
 - Logging: rotating log file (5 MB, 3 backups), timestamps with milliseconds
 
 ### config.py
-All constants, platform-aware: paths (captures and logs on the external SSD), GPIO pin and direction of the door sensor (`DOOR_SENSOR_INVERTED`), camera resolution, default image alignment (`SEAM_OVERLAP_PX`, `VERTICAL_SHIFT_PX`), QR scan window, tray limits (1-50), magnifier size/zoom
+All constants, platform-aware: paths (captures and logs on the external SSD), GPIO pin and direction of the door sensor (`DOOR_SENSOR_INVERTED`), camera resolution, default seam overlaps (`SEAM_OVERLAP_PX`), QR scan window, tray limits (1-50), magnifier size/zoom
 
 ### qr_code_scanner.py
 Ribbon camera via picamera2 + pyzbar. Runs permanently (`start_stream()` at startup); `scan_now()` only reads the newest frames until a QR code is found or `QR_SCAN_WINDOW_S` is over. `stop_stream()` releases the camera for the live preview and at program end.
@@ -50,7 +50,7 @@ Ribbon camera via picamera2 + pyzbar. Runs permanently (`start_stream()` at star
 
 ### camera_capture.py
 - Two steps: `grab_frames()` takes the newest frame of every camera from the streams, all at the same moment; `combine_and_save()` combines and saves them once the tray number is known. `capture_and_save()` = both at once (manual capture)
-- Combining: one overlap value per seam - half of it is cut off each of the two neighbouring cameras, the outer edges stay, so the picture stays centered. Plus a vertical shift per camera. Values from Camera Setup (`settings.json`), defaults in `config.py`
+- Combining: one overlap value per seam - half of it is cut off each of the two neighbouring cameras, the outer edges stay, so the picture stays centered. Values from Camera Setup (`settings.json`), defaults in `config.py`
 - If the values don't fit the cameras (e.g. one is missing), the images are saved side by side uncut, with a warning in the log
 - Result saved as `OUTPUT_DIR/<tray>/finalFrame_<timestamp>.jpg` (timestamp = moment the photos were taken); max. `MAX_IMAGES_PER_TRAY` images per tray (oldest deleted)
 
@@ -72,7 +72,7 @@ Reads/writes `inventory.txt`. Writes are crash-safe (temp file + `os.replace`). 
 - Searchable tray table; right-click → rename description
 - Image preview of the selected tray's latest capture, scaled to the size of the preview area; hold the left mouse button on the image for a magnifier
 - After a capture, only the affected table row (and its preview) is refreshed
-- Camera Setup (always available): live camera pictures (updated every `CAMERA_SETUP_PREVIEW_REFRESH_MS`, taken from the running streams), reorder via arrows, newly plugged-in cameras are found every time the window is opened, image alignment (overlap per seam, height shift per camera) with a live preview of the combined picture, live ribbon-cam preview (separate window; the program releases the ribbon cam for it and restarts it when the preview is closed - no automatic photos meanwhile)
+- Camera Setup (always available): live camera pictures (updated every `CAMERA_SETUP_PREVIEW_REFRESH_MS`, taken from the running streams), reorder via arrows, newly plugged-in cameras are found every time the window is opened, overlap per seam with a live preview of the combined picture (red seam lines only in the preview, not in saved photos), live ribbon-cam preview (separate window; the program releases the ribbon cam for it and restarts it when the preview is closed - no automatic photos meanwhile)
 
 ### Mock modules (Windows)
 `door_sensor_mock` (Enter toggles the door), `qr_code_scanner_mock` (always tray 1), `camera_capture_mock` (only replaces grabbing the frames - webcams or placeholder images; combining and saving is the real code).

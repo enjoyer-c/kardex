@@ -13,7 +13,6 @@ Combining - one overlap value per seam (= border between two neighbouring camera
     [     |cut] [cut|    |cut] [cut|    |cut] [cut|     ]
           seam 1         seam 2         seam 3
 
-    Plus a vertical shift per camera, for cameras hanging at slightly different heights.
     The values are set in the Camera Setup window (saved in SETTINGS_FILE), defaults in config.py.
 """
 
@@ -47,7 +46,7 @@ class FrameSet:
     taken_wall: datetime   # wall-clock time - goes into the file name
 
 
-# --- Alignment values (overlap per seam, vertical shift per camera) -------------
+# --- Overlap values (one per seam) -----------------------------------------------
 
 def _read_settings() -> dict:
     try:
@@ -58,26 +57,19 @@ def _read_settings() -> dict:
         return {}
 
 
-def _int_list(value) -> list[int] | None:
-    if isinstance(value, list) and all(isinstance(v, int) for v in value):
-        return value
-    return None
-
-
-def load_alignment() -> tuple[list[int], list[int]]:
-    """(overlap per seam, vertical shift per camera) - as saved in Camera Setup, otherwise the defaults from config.py.
+def load_seam_overlaps() -> list[int]:
+    """Overlap per seam - as saved in Camera Setup, otherwise the defaults from config.py.
     Read fresh on every capture, so a change in Camera Setup applies to the very next photo."""
-    settings = _read_settings()
-    overlaps = _int_list(settings.get("seam_overlap_px")) or list(config.SEAM_OVERLAP_PX)
-    shifts = _int_list(settings.get("vertical_shift_px")) or list(config.VERTICAL_SHIFT_PX)
-    return overlaps, shifts
+    overlaps = _read_settings().get("seam_overlap_px")
+    if isinstance(overlaps, list) and all(isinstance(v, int) for v in overlaps):
+        return overlaps
+    return list(config.SEAM_OVERLAP_PX)
 
 
-def save_alignment(overlaps: list[int], shifts: list[int]) -> None:
-    """Saves the alignment values from Camera Setup. Other keys in the settings file are kept. Raises OSError if it can't be written."""
+def save_seam_overlaps(overlaps: list[int]) -> None:
+    """Saves the overlaps from Camera Setup. Other keys in the settings file are kept. Raises OSError if it can't be written."""
     settings = _read_settings()
     settings["seam_overlap_px"] = [int(v) for v in overlaps]
-    settings["vertical_shift_px"] = [int(v) for v in shifts]
     config.SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(config.SETTINGS_FILE, "w", encoding="utf-8") as f:
         json.dump(settings, f, indent=2)
@@ -85,16 +77,14 @@ def save_alignment(overlaps: list[int], shifts: list[int]) -> None:
 
 # --- Combining --------------------------------------------------------------------
 
-def crop_and_combine(frames: list, overlaps: list[int], shifts: list[int], show_seams: bool = False):
-    """Crops the overlaps, applies the vertical shifts and puts the frames side by side (see module docstring).
+def crop_and_combine(frames: list, overlaps: list[int], show_seams: bool = False):
+    """Crops the overlaps and puts the frames side by side (see module docstring).
     Raises ValueError if the values don't fit the frames (wrong count, nothing left after cutting).
-    show_seams draws a thin red line where two images meet (for the Camera Setup preview)."""
+    show_seams draws a red line where two images meet - only for the Camera Setup preview, never in a saved photo."""
     if len(overlaps) != len(frames) - 1:
         raise ValueError(f"{len(frames)} cameras need {len(frames) - 1} overlap values, got {len(overlaps)}")
-    if len(shifts) != len(frames):
-        raise ValueError(f"{len(frames)} cameras need {len(frames)} vertical shifts, got {len(shifts)}")
 
-    # 1. Horizontal: half of every seam's overlap from each neighbour
+    height = min(frame.shape[0] for frame in frames)   # hconcat needs equal heights (all cameras use the same resolution anyway)
     cropped = []
     for i, frame in enumerate(frames):
         width = frame.shape[1]
@@ -102,35 +92,27 @@ def crop_and_combine(frames: list, overlaps: list[int], shifts: list[int], show_
         cut_right = overlaps[i] // 2 if i < len(frames) - 1 else 0           # left half of the seam after
         if cut_left < 0 or cut_right < 0 or cut_left + cut_right >= width:
             raise ValueError(f"Camera {i + 1}: cutting {cut_left} + {cut_right} px doesn't fit {width} px")
-        cropped.append(frame[:, cut_left:width - cut_right])
+        cropped.append(frame[:height, cut_left:width - cut_right])
 
-    # 2. Vertical: shift, and keep only the rows that ALL images have
-    height = min(frame.shape[0] for frame in cropped)
-    top = max(shifts)
-    out_height = height + min(shifts) - max(shifts)
-    if out_height <= 0:
-        raise ValueError("Vertical shifts are too large - nothing would be left")
-    aligned = [frame[top - shift: top - shift + out_height] for frame, shift in zip(cropped, shifts)]
-
-    combined = cv2.hconcat(aligned)
+    combined = cv2.hconcat(cropped)
 
     if show_seams:
         x = 0
-        for frame in aligned[:-1]:
+        for frame in cropped[:-1]:
             x += frame.shape[1]
-            cv2.line(combined, (x, 0), (x, out_height - 1), (0, 0, 255), 2)
+            cv2.line(combined, (x, 0), (x, height - 1), (0, 0, 255), 2)
     return combined
 
 
 def combine(frames: list) -> "cv2.typing.MatLike":
-    """The final picture with the saved alignment. If the values don't fit (e.g. a camera is missing),
+    """The final picture with the saved overlaps. If they don't fit (e.g. a camera is missing),
     the frames are put side by side UNCUT - better an uncut picture than none."""
-    overlaps, shifts = load_alignment()
+    overlaps = load_seam_overlaps()
     try:
-        return crop_and_combine(frames, overlaps, shifts)
+        return crop_and_combine(frames, overlaps)
     except ValueError as exc:
-        logging.warning("Image alignment doesn't fit (%s) - saved uncut, please check Camera Setup", exc)
-        return crop_and_combine(frames, [0] * (len(frames) - 1), [0] * len(frames))
+        logging.warning("Seam overlaps don't fit (%s) - saved uncut, please check Camera Setup", exc)
+        return crop_and_combine(frames, [0] * (len(frames) - 1))
 
 
 # --- Capture --------------------------------------------------------------------

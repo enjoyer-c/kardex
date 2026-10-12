@@ -111,10 +111,9 @@ class App:
         self._camera_setup_photos: dict[str, ImageTk.PhotoImage] = {}
         self._camera_setup_slots_frame: Optional[ttk.Frame] = None
         self._camera_setup_status_var: Optional[tk.StringVar] = None
-        # Image alignment (Camera Setup): overlap per seam, vertical shift per camera (moves along when reordering)
+        # Camera Setup: overlap per seam between neighbouring cameras
         self._seam_overlaps: list[int] = []
-        self._camera_shifts: dict[str, int] = {}
-        self._alignment_vars: list[tk.IntVar] = []   # keeps the spinbox variables alive (Tk forgets them otherwise)
+        self._overlap_vars: list[tk.IntVar] = []   # keeps the spinbox variables alive (Tk forgets them otherwise)
         self._camera_setup_seams_frame: Optional[ttk.Frame] = None
         self._combined_preview_label: Optional[ttk.Label] = None
         self._combined_preview_photo: Optional[ImageTk.PhotoImage] = None
@@ -380,10 +379,7 @@ class App:
         self._camera_setup_order = camera_setup.load_camera_order()
         self._camera_setup_photos = {}
 
-        # Saved alignment: the shifts belong to the cameras in the saved order
-        overlaps, shifts = camera_setup.load_alignment()
-        self._seam_overlaps = list(overlaps)
-        self._camera_shifts = {device: shift for device, shift in zip(self._camera_setup_order, shifts)}
+        self._seam_overlaps = camera_setup.load_seam_overlaps()
 
         # The window opens IMMEDIATELY - the camera search runs in the
         # background and fills in the slots once it's done
@@ -399,7 +395,7 @@ class App:
         ttk.Label(
             self._camera_setup_window,
             text="1. Identify each camera by its picture and set the left-to-right order with the arrows.\n"
-                 "2. Adjust the overlaps and heights until the combined picture at the bottom looks continuous (red lines = seams).\n"
+                 "2. Adjust the overlaps until the combined picture at the bottom looks continuous (red lines = seams).\n"
                  "3. Save - applies from the next photo on.",
             justify="left",
             font=("Arial", 11),
@@ -459,7 +455,7 @@ class App:
         self._camera_setup_seams_frame = None
         self._combined_preview_label = None
         self._combined_preview_photo = None
-        self._alignment_vars = []
+        self._overlap_vars = []
         self.tray_table.focus_set()
 
     def _update_camera_setup_buttons(self) -> None:
@@ -546,12 +542,12 @@ class App:
 
         self._camera_preview_fetch_running = True
         devices = list(self._camera_setup_order)
-        overlaps, shifts = self._current_alignment()
+        overlaps = self._current_overlaps()
         threading.Thread(
-            target=self._camera_preview_worker, args=(devices, overlaps, shifts), daemon=True
+            target=self._camera_preview_worker, args=(devices, overlaps), daemon=True
         ).start()
 
-    def _camera_preview_worker(self, devices: list[str], overlaps: list[int], shifts: list[int]) -> None:
+    def _camera_preview_worker(self, devices: list[str], overlaps: list[int]) -> None:
         """Background thread: newest frame per camera + the combined picture with the CURRENT (unsaved) values."""
         frames: dict = {}
         combined = None
@@ -560,7 +556,7 @@ class App:
             frames = camera_setup.get_preview_frames(devices)
             if devices and all(device in frames for device in devices):
                 combined = camera_setup.crop_and_combine(
-                    [frames[device] for device in devices], overlaps, shifts, show_seams=True
+                    [frames[device] for device in devices], overlaps, show_seams=True
                 )
             else:
                 combined_error = "Combined picture: waiting for all cameras ..."
@@ -602,20 +598,18 @@ class App:
         pil_image.thumbnail(max_size)
         return ImageTk.PhotoImage(pil_image)
 
-    # --- Camera Setup: image alignment ---------------------------------------------
+    # --- Camera Setup: seam overlaps ------------------------------------------------
 
-    def _current_alignment(self) -> tuple[list[int], list[int]]:
-        """(overlap per seam, shift per camera) as currently set in the window, in the current camera order."""
+    def _current_overlaps(self) -> list[int]:
+        """Overlap per seam as currently set in the window - exactly one value per seam."""
         seam_count = max(len(self._camera_setup_order) - 1, 0)
-        overlaps = (self._seam_overlaps + [0] * seam_count)[:seam_count]
-        shifts = [self._camera_shifts.get(device, 0) for device in self._camera_setup_order]
-        return overlaps, shifts
+        return (self._seam_overlaps + [0] * seam_count)[:seam_count]
 
-    def _alignment_spinbox(self, parent, value: int, low: int, high: int, on_change: Callable[[int], None]) -> ttk.Spinbox:
+    def _overlap_spinbox(self, parent, value: int, on_change: Callable[[int], None]) -> ttk.Spinbox:
         """Number field with arrows (2 px steps). on_change gets the new value - also when typed in;
         an invalid entry (empty, letters) is simply ignored until it's valid again."""
         var = tk.IntVar(value=value)
-        self._alignment_vars.append(var)
+        self._overlap_vars.append(var)
 
         def _changed(*_args) -> None:
             try:
@@ -624,15 +618,12 @@ class App:
                 pass
 
         var.trace_add("write", _changed)
-        return ttk.Spinbox(parent, from_=low, to=high, increment=2, width=6, textvariable=var)
+        return ttk.Spinbox(parent, from_=0, to=1200, increment=2, width=6, textvariable=var)
 
     def _set_seam_overlap(self, index: int, value: int) -> None:
         while len(self._seam_overlaps) <= index:
             self._seam_overlaps.append(0)
         self._seam_overlaps[index] = value
-
-    def _set_camera_shift(self, device: str, value: int) -> None:
-        self._camera_shifts[device] = value
 
     def _render_camera_setup_slots(self) -> None:
         """Rebuilds the row of camera slots from self._camera_setup_order -
@@ -641,7 +632,7 @@ class App:
             for child in frame.winfo_children():
                 child.destroy()
         self._camera_setup_image_labels = {}
-        self._alignment_vars = []
+        self._overlap_vars = []
 
         for index, device in enumerate(self._camera_setup_order):
             slot = ttk.Frame(self._camera_setup_slots_frame, relief="groove", borderwidth=1, padding=10)
@@ -677,23 +668,14 @@ class App:
             if index == len(self._camera_setup_order) - 1:
                 right_button.state(["disabled"])
 
-            # Vertical shift of THIS camera - moves along with it when reordering
-            shift_frame = ttk.Frame(slot)
-            shift_frame.pack(pady=(6, 0))
-            ttk.Label(shift_frame, text="Height shift [px]:").pack(side="left", padx=(0, 5))
-            self._alignment_spinbox(
-                shift_frame, self._camera_shifts.get(device, 0), -200, 200,
-                lambda value, d=device: self._set_camera_shift(d, value),
-            ).pack(side="left")
-
         # Overlap per seam (between two neighbouring positions)
-        overlaps, _shifts = self._current_alignment()
+        overlaps = self._current_overlaps()
         if overlaps:
             ttk.Label(self._camera_setup_seams_frame, text="Overlap [px]:", font=("Arial", 10, "bold")).pack(side="left", padx=(0, 10))
         for index, overlap in enumerate(overlaps):
             ttk.Label(self._camera_setup_seams_frame, text=f"Seam {index + 1}|{index + 2}").pack(side="left", padx=(10, 5))
-            self._alignment_spinbox(
-                self._camera_setup_seams_frame, overlap, 0, 1200,
+            self._overlap_spinbox(
+                self._camera_setup_seams_frame, overlap,
                 lambda value, i=index: self._set_seam_overlap(i, value),
             ).pack(side="left")
 
@@ -706,16 +688,16 @@ class App:
         self._render_camera_setup_slots()
 
     def _save_camera_setup(self) -> None:
-        """Saves the camera order and the image alignment. Captures read both fresh, so they apply to the next photo."""
-        overlaps, shifts = self._current_alignment()
+        """Saves the camera order and the seam overlaps. Captures read both fresh, so they apply to the next photo."""
+        overlaps = self._current_overlaps()
         try:
             camera_setup.save_camera_order(self._camera_setup_order)
-            camera_setup.save_alignment(overlaps, shifts)
+            camera_setup.save_seam_overlaps(overlaps)
         except OSError as exc:
             self.log_event(f"Camera Setup could not be saved: {exc}", level=logging.ERROR)
             messagebox.showerror("Camera Setup", f"Could not be saved:\n\n{exc}", parent=self._camera_setup_window)
             return
-        self.log_event(f"Camera Setup saved - overlaps {overlaps} px, height shifts {shifts} px")
+        self.log_event(f"Camera Setup saved - seam overlaps {overlaps} px")
         self._close_camera_setup_window()
 
     def _launch_ribbon_cam_preview(self) -> None:

@@ -11,8 +11,8 @@ import config
 import camera_capture
 import camera_streams
 # Re-exported, so the GUI can use them without importing camera_capture
-load_alignment = camera_capture.load_alignment
-save_alignment = camera_capture.save_alignment
+load_seam_overlaps = camera_capture.load_seam_overlaps
+save_seam_overlaps = camera_capture.save_seam_overlaps
 crop_and_combine = camera_capture.crop_and_combine
 
 

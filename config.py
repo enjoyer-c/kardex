@@ -1,7 +1,6 @@
 """
 Central configuration for the Kardex project.
-
-Platform-aware (Windows dev machine vs. Raspberry Pi)
+Platform-aware (Windows dev machine vs. Raspberry Pi), so the same file works unchanged on both without manual edits.
 """
 
 from pathlib import Path
@@ -23,41 +22,45 @@ else:
     CAP_BACKEND = cv2.CAP_ANY
 
 # --- USB-Cams ---------------------------------------------------------------
+# Saved left-to-right camera order. Loading it lives in camera_setup.py - see camera_setup.get_camera_devices()
+CAMERA_ORDER_FILE = BASE_DIR / "camera_order.json"
+
+# Settings changed via the GUI (currently: seam overlaps from Camera Setup)
+SETTINGS_FILE = BASE_DIR / "settings.json"
+
 USB_CAMERA_FOURCC = "MJPG"
 USB_CAMERA_RESOLUTION = (1280, 720)
 USB_CAMERA_FPS = 15                     # frame rate of the permanent streams (lower = less USB bandwidth/CPU; None = camera default)
 
-# Saved left-to-right camera order. Loading it lives in camera_setup.py
-CAMERA_ORDER_FILE = BASE_DIR / "camera_order.json"
-
-# Seam Overlaps settings
-SETTINGS_FILE = BASE_DIR / "settings.json"
-
-
-# The USB cameras stream
+# The USB cameras stay open permanently (camera_streams.py) - a capture only takes the newest frame
 USB_CAMERA_MAX_FRAME_AGE_S = 1.0        # a frame older than this is never used for a photo [s]
 USB_CAMERA_RECONNECT_S = 2.0            # pause before a lost/unplugged camera is opened again [s]
 USB_CAMERA_FIRST_FRAME_TIMEOUT_S = 5.0  # max wait for the first frame of a JUST started stream [s]
-CAMERA_SETUP_PREVIEW_REFRESH_MS = 1000   # how often the Camera Setup window updates its camera pictures [ms]
+CAMERA_SETUP_PREVIEW_REFRESH_MS = 500   # how often the Camera Setup window updates its camera pictures [ms]
 
 # --- Combining the camera images --------------------------------------------
-# Overlap per seam between neighbouring cameras in pixels
-SEAM_OVERLAP_PX = [390, 410, 520] #Default -> Cam Settings overrule
+# Overlap per seam between neighbouring cameras in pixels (one value less than cameras) - see camera_capture.py.
+# These are only the defaults: the values set in the Camera Setup window are saved in SETTINGS_FILE and used from then on.
+SEAM_OVERLAP_PX = [390, 410, 520]
 
 MAX_IMAGES_PER_TRAY = 3
 
 # --- QR-Code-Cam -----------------------------------------------------------
 QR_CAPTURE_SIZE = (1332, 990)   
-# The ribbon cam runs permanently. When the door opens, it looks for a QR code for at most this long (~2.5sec tray stand still)
-QR_SCAN_WINDOW_S = 1.0
+# The ribbon cam runs permanently. When the door opens, it looks for a QR code for at most this long -
+# the tray still stands ~2.5 s after the door opens, and the USB photos are already taken before the scan starts.
+QR_SCAN_WINDOW_S = 1.5
+QR_DEBUG_KEEP = 20                      # no QR code found -> the ribbon cam picture is saved in QR_DEBUG_DIR, newest 20 are kept
 
 # --- Door-Sensor -----------------------------------------------------------
 DOOR_SENSOR_GPIO = 17 #Pin11
 DOOR_SENSOR_BOUNCE_TIME_MS = 350
-
-DOOR_SENSOR_INVERTED = True #Direction of the contact. True -> NC contact
+# Direction of the contact. False: contact closed (magnet present) = door CLOSED.
+# True: the other way round (e.g. NC contact) - live test 09.10.: door events were reported reversed
+DOOR_SENSOR_INVERTED = True
 
 # TEMP door test: shows a "TEST: Toggle Door" button in the GUI that
+# simulates the magnet (open/close). Set to False to hide it again.
 DOOR_TEST_BUTTON = True
 
 # --- Data -----------------------------------------------------------------
@@ -86,3 +89,4 @@ LENS_ZOOM = 2     # magnification relative to the preview (~2 = about the origin
 # --- Logging ----------------------------------------------------------
 LOG_DIR = SSD_DIR / "logs"
 LOG_FILE = LOG_DIR / "kardex.log"
+QR_DEBUG_DIR = LOG_DIR / "qr_debug"     # ribbon cam pictures of scans without a QR code (see QR_DEBUG_KEEP)

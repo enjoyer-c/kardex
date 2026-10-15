@@ -1,24 +1,32 @@
 """
 Live preview for the QR scanner for positioning the camera and checking QR placement/focus during physical setup.
-Shows the live feed with a green outline drawn around any QR code zbar detects, plus its decoded content - so you can see in real
-time whether the QR is actually readable from the current position/angle/distance, not just guess from the raw image.
+Uses EXACTLY the same readers as the main program (qr_code_scanner.scan_frame) - what is green here is also read
+when the door opens. A green outline is drawn around the code (if the reader reports its corners), plus the
+reader name and the time one scan took. Press 's' to save the current picture (for checking it afterwards).
 
-If zbar finds nothing, the fallback readers of the main program are tried too (see qr_code_scanner.scan_frame) - a yellow text
-then shows that the code is only readable with a fallback. Press 's' to save the current picture (for checking it afterwards).
+Status line:
+    green   read by zbar (the fast standard reader)
+    yellow  only readable by a fallback reader - works, but better improve position/light
+    red     not readable
 
 Started from Camera Setup in main.py, which releases its own ribbon cam stream for it and restarts it when this window closes.
 """
 
 from datetime import datetime
+import time
 
 import cv2
-from pyzbar.pyzbar import decode
 from picamera2 import Picamera2
 
 import config
 import qr_code_scanner
 
 WINDOW_NAME = "Ribbon Cam - QR Setup (q or X = quit, s = save picture)"
+
+# picamera2 "RGB888" frames are B, G, R - so the colors here are BGR too
+GREEN = (0, 255, 0)
+YELLOW = (0, 255, 255)
+RED = (0, 0, 255)
 
 
 def _put_status(frame, text: str, color) -> None:
@@ -33,43 +41,28 @@ def main() -> None:
     )
     picam.configure(preview_config)
     picam.start()
+    print(f"QR readers: {qr_code_scanner.reader_names()}")
 
     try:
         while True:
             raw = picam.capture_array()
             frame = raw.copy()   # drawing goes onto the copy, saving ('s') uses the untouched picture
-            gray = cv2.cvtColor(raw, cv2.COLOR_RGB2GRAY)
 
-            found_by_zbar = False
-            for obj in decode(gray):
-                if obj.type != "QRCODE":
-                    continue
-                found_by_zbar = True
+            t0 = time.monotonic()
+            result = qr_code_scanner.scan_frame(raw)
+            scan_ms = (time.monotonic() - t0) * 1000
 
-                points = obj.polygon
-                if points:
-                    pts = [(p.x, p.y) for p in points]
-                    for i in range(len(pts)):
-                        cv2.line(frame, pts[i], pts[(i + 1) % len(pts)], (0, 255, 0), 3)
-
-                x, y, _w, _h = obj.rect
-                cv2.putText(
-                    frame, obj.data.decode("utf-8"), (x, max(y - 10, 10)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2,
-                )
-
-            if found_by_zbar:
-                _put_status(frame, "QR: read by zbar", (0, 255, 0))
+            if result is None:
+                _put_status(frame, f"QR: not readable  ({scan_ms:.0f} ms)", RED)
             else:
-                # Same readers as the main program uses - shows whether a fallback would still find the code
-                result = qr_code_scanner.scan_frame(raw)
-                if result is not None:
-                    _put_status(frame, f"QR: '{result.data}' - only readable with '{result.reader}'", (255, 255, 0))
-                else:
-                    _put_status(frame, "QR: not readable", (255, 0, 0))
+                color = GREEN if result.reader == "zbar" else YELLOW
+                _put_status(frame, f"QR: '{result.data}' read by {result.reader}  ({scan_ms:.0f} ms)", color)
+                if result.points:
+                    pts = result.points
+                    for i in range(len(pts)):
+                        cv2.line(frame, pts[i], pts[(i + 1) % len(pts)], color, 3)
 
-            bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            cv2.imshow(WINDOW_NAME, bgr)
+            cv2.imshow(WINDOW_NAME, frame)
 
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
@@ -77,7 +70,7 @@ def main() -> None:
             if key == ord("s"):
                 config.QR_DEBUG_DIR.mkdir(parents=True, exist_ok=True)
                 path = config.QR_DEBUG_DIR / f"preview_{datetime.now().strftime(config.TIMESTAMP_FORMAT)}.jpg"
-                cv2.imwrite(str(path), cv2.cvtColor(raw, cv2.COLOR_RGB2BGR))
+                cv2.imwrite(str(path), raw)
                 print(f"Saved: {path}")
             # X button: closing the window only hides it - the loop would keep running and block the camera.
             # getWindowProperty reports < 1 once the window was closed.

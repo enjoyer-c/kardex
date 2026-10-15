@@ -1,10 +1,20 @@
 """
-Ribbon camera (Raspberry Pi HQ Camera) for QR code scanning, via picamera2 + pyzbar.
+Ribbon camera (Raspberry Pi HQ Camera) for QR code scanning.
 
-The camera runs permanently (start_stream at program start). A scan only takes the newest
-frames and decodes them - no camera start, no waiting for exposure.
-Only the ribbon-cam live preview (Camera Setup) stops the stream for a while, because two
-programs can't use the camera at the same time - see stop_stream / start_stream.
+The camera runs permanently AND is scanned permanently: a background thread reads every newest frame and looks for
+a QR code (see _scan_loop). So when the door opens, the answer is usually already there - scan_now() only has to look
+at what the loop has seen around the door signal, it never starts the camera or waits for exposure.
+
+Several QR readers are tried one after another (see scan_frame), because each one fails on different pictures
+(reflections, small white border around the code, slight angle). Optional readers are used if they are installed:
+    zxing-cpp      pip install zxing-cpp         (very robust)
+    opencv-aruco   OpenCV >= 4.7                 (read the label on metal that zbar and the normal OpenCV reader missed)
+Which readers are active is written to the log when the stream starts.
+
+Only the ribbon-cam live preview (Camera Setup) stops the stream for a while, because two programs can't use the
+camera at the same time - see stop_stream / start_stream.
+
+Note on colors: picamera2's "RGB888" format delivers the pixels in B, G, R order - i.e. exactly what OpenCV expects.
 """
 
 from dataclasses import dataclass
@@ -26,89 +36,221 @@ try:
 except (ImportError, ModuleNotFoundError):
     HAS_PICAMERA = False
 
+try:
+    import zxingcpp
+except (ImportError, ModuleNotFoundError):
+    zxingcpp = None
+
 
 @dataclass
 class QRResult:
     data: str
     qr_type: str
-    reader: str = "zbar"   # which reader found it (see scan_frame) - for the log
+    reader: str = "zbar"          # which reader found it (see scan_frame) - for the log
+    points: list | None = None    # corners [(x, y), ...] in the frame, if the reader reports them (live preview outline)
+    seen_at: float = 0.0          # time.monotonic() when the frame was taken
 
+
+# --- Readers ------------------------------------------------------------------------
 
 _cv2_qr_detector = cv2.QRCodeDetector()
+_cv2_aruco_detector = cv2.QRCodeDetectorAruco() if hasattr(cv2, "QRCodeDetectorAruco") else None
 
+
+def _zbar(gray):
+    for r in decode(gray):
+        if r.type == "QRCODE":
+            return r.data.decode("utf-8"), [(p.x, p.y) for p in r.polygon]
+    return None
+
+
+def _zxing(gray):
+    for r in zxingcpp.read_barcodes(gray):
+        if "QR" in str(r.format) and r.text:
+            return r.text, None
+    return None
+
+
+def _opencv_with(detector):
+    def read(gray):
+        data, points, _ = detector.detectAndDecode(gray)
+        if not data:
+            return None
+        corners = [(int(x), int(y)) for x, y in points.reshape(-1, 2)] if points is not None else None
+        return data, corners
+    return read
+
+
+# Order = fastest / most reliable first. The others only run if the ones before found nothing.
+READERS = [("zbar", _zbar)]
+if zxingcpp is not None:
+    READERS.append(("zxing", _zxing))
+if _cv2_aruco_detector is not None:
+    READERS.append(("opencv-aruco", _opencv_with(_cv2_aruco_detector)))
+READERS.append(("opencv", _opencv_with(_cv2_qr_detector)))
+
+
+def reader_names() -> str:
+    return ", ".join(name for name, _ in READERS)
+
+
+def scan_frame(frame) -> Optional[QRResult]:
+    """Looks for a QR code in a single frame (BGR array from picamera2). Returns the first QR code found, or None.
+    A reader that crashes is skipped - the next one still gets its chance."""
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    for name, read in READERS:
+        try:
+            found = read(gray)
+        except Exception:
+            logging.exception("QR reader '%s' crashed", name)
+            continue
+        if found:
+            data, points = found
+            return QRResult(data=data, qr_type="QRCODE", reader=name, points=points)
+    return None
+
+
+# --- Camera + permanent scanning ----------------------------------------------------
 
 _picam: "Picamera2 | None" = None
-_lock = threading.Lock()   # start / stop / scan never at the same time
+_start_stop_lock = threading.Lock()     # start_stream / stop_stream never at the same time
+_stop_event = threading.Event()
+_thread: threading.Thread | None = None
+
+# Shared between the scan loop and scan_now - always accessed with _cond held
+_cond = threading.Condition()
+_last_frame = None              # newest scanned frame (for the debug picture)
+_last_frame_time = 0.0          # time.monotonic() when it was taken
+_hits: list[QRResult] = []      # QR codes seen in the last seconds (oldest first)
+
+
+def _open_camera() -> "Picamera2":
+    picam = Picamera2()
+    try:
+        picam.configure(picam.create_video_configuration(
+            main={"size": config.QR_CAPTURE_SIZE, "format": "RGB888"}
+        ))
+        picam.start()
+    except Exception:
+        picam.close()   # otherwise the camera stays "busy" until the program ends
+        raise
+    return picam
+
+
+def _close_camera(picam) -> None:
+    try:
+        picam.stop()
+        picam.close()
+    except Exception:
+        logging.exception("Ribbon cam could not be stopped cleanly")
+
+
+def _scan_loop() -> None:
+    """Background thread: newest frame -> scan -> remember the result. Runs until stop_stream().
+    Never dies on an error: camera errors lead to a camera restart, everything else is logged and the loop continues."""
+    global _picam, _last_frame, _last_frame_time
+    errors_in_a_row = 0
+    visible: str | None = None      # QR content currently in view (for the "in view / out of view" log lines)
+    last_seen = 0.0
+
+    while not _stop_event.is_set():
+        loop_start = time.monotonic()
+        try:
+            frame = _picam.capture_array()
+            taken = time.monotonic()
+            errors_in_a_row = 0
+        except Exception as exc:
+            errors_in_a_row += 1
+            logging.warning("Ribbon cam: could not read a frame (%s)", exc)
+            if errors_in_a_row >= config.QR_CAMERA_RESTART_AFTER:
+                logging.error("Ribbon cam: %d errors in a row - restarting the camera", errors_in_a_row)
+                _close_camera(_picam)
+                try:
+                    _picam = _open_camera()
+                    errors_in_a_row = 0
+                    logging.info("Ribbon cam restarted")
+                except Exception as restart_exc:
+                    logging.error("Ribbon cam restart failed: %s", restart_exc)
+            _stop_event.wait(0.5)
+            continue
+
+        try:
+            result = scan_frame(frame)
+        except Exception:
+            logging.exception("QR scan crashed")
+            result = None
+
+        with _cond:
+            _last_frame, _last_frame_time = frame, taken
+            if result is not None:
+                result.seen_at = taken
+                _hits.append(result)
+            # Only keep what scan_now could still ask for
+            while _hits and taken - _hits[0].seen_at > config.QR_SCAN_WINDOW_S + config.QR_RECENT_S + 5:
+                _hits.pop(0)
+            _cond.notify_all()
+
+        # Log when a code comes into view / leaves - shows the exact timing next to the door events in the log.
+        # "Out of view" only after QR_GONE_S without a code, so a single unreadable frame doesn't spam the log.
+        if result is not None:
+            last_seen = taken
+            if result.data != visible:
+                visible = result.data
+                logging.info("  details: QR code in view: '%s' (reader: %s)", result.data, result.reader)
+        elif visible is not None and taken - last_seen > config.QR_GONE_S:
+            logging.info("  details: QR code '%s' out of view", visible)
+            visible = None
+
+        rest = config.QR_SCAN_INTERVAL_S - (time.monotonic() - loop_start)
+        if rest > 0:
+            _stop_event.wait(rest)
 
 
 def start_stream() -> Optional[str]:
-    """Opens the ribbon camera and keeps it running. Returns None on success, otherwise an error text.
+    """Opens the ribbon camera and starts the permanent scanning. Returns None on success, otherwise an error text.
     Does nothing if it's already running."""
-    global _picam
+    global _picam, _thread
     if not HAS_PICAMERA:
         return "picamera2 is not installed - trays can't be detected"
-    with _lock:
-        if _picam is not None:
+    with _start_stop_lock:
+        if _thread is not None and _thread.is_alive():
             return None
         try:
-            picam = Picamera2()
-            picam.configure(picam.create_video_configuration(
-                main={"size": config.QR_CAPTURE_SIZE, "format": "RGB888"}
-            ))
-            picam.start()
+            _picam = _open_camera()
         except Exception as exc:
+            _picam = None
             return f"Ribbon cam could not be started: {exc}"
-        _picam = picam
-    logging.info("Ribbon cam stream started")
+        with _cond:
+            _hits.clear()
+        _stop_event.clear()
+        _thread = threading.Thread(target=_scan_loop, name="qr-scan", daemon=True)
+        _thread.start()
+    logging.info("Ribbon cam stream started (QR readers: %s)", reader_names())
     return None
 
 
 def stop_stream() -> None:
-    """Releases the ribbon camera (e.g. for the live preview or at program end)."""
-    global _picam
-    with _lock:
-        if _picam is None:
+    """Stops the scanning and releases the ribbon camera (e.g. for the live preview or at program end)."""
+    global _picam, _thread
+    with _start_stop_lock:
+        if _thread is None:
             return
-        try:
-            _picam.stop()
-            _picam.close()
-        except Exception:
-            logging.exception("Ribbon cam could not be stopped cleanly")
-        _picam = None
+        _stop_event.set()
+        with _cond:
+            _cond.notify_all()   # wake up a waiting scan_now
+        _thread.join(timeout=5)
+        _thread = None
+        if _picam is not None:
+            _close_camera(_picam)
+            _picam = None
     logging.info("Ribbon cam stream stopped")
 
 
-def _zbar(gray) -> Optional[str]:
-    results = [r for r in decode(gray) if r.type == "QRCODE"]
-    return results[0].data.decode("utf-8") if results else None
+def is_running() -> bool:
+    return _thread is not None and _thread.is_alive()
 
 
-def _opencv(gray) -> Optional[str]:
-    data, _points, _ = _cv2_qr_detector.detectAndDecode(gray)
-    return data or None
-
-
-def scan_frame(frame) -> Optional[QRResult]:
-    """Looks for a QR code in a single frame (RGB array from picamera2). Returns the first QR code found, or None.
-    Tries several readers - zbar first (fast); only if it finds nothing:
-      - zbar on the inverted picture (zbar can't read white-on-black codes)
-      - the OpenCV QR reader (works differently, reads some codes zbar misses)"""
-    gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-    readers = (
-        ("zbar", lambda: _zbar(gray)),
-        ("zbar inverted", lambda: _zbar(255 - gray)),
-        ("opencv", lambda: _opencv(gray)),
-    )
-    for name, read in readers:
-        try:
-            data = read()
-        except Exception:
-            logging.exception("QR reader '%s' crashed", name)
-            continue
-        if data:
-            return QRResult(data=data, qr_type="QRCODE", reader=name)
-    return None
-
+# --- Door opening -------------------------------------------------------------------
 
 def _save_debug_frame(frame) -> Optional[str]:
     """Saves what the ribbon cam saw when no QR code was found, so it can be checked afterwards.
@@ -116,7 +258,7 @@ def _save_debug_frame(frame) -> Optional[str]:
     try:
         config.QR_DEBUG_DIR.mkdir(parents=True, exist_ok=True)
         path = config.QR_DEBUG_DIR / f"no_qr_{datetime.now().strftime(config.TIMESTAMP_FORMAT)}.jpg"
-        cv2.imwrite(str(path), cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+        cv2.imwrite(str(path), frame)
         old = sorted(config.QR_DEBUG_DIR.glob("no_qr_*.jpg"))
         for file in old[:-config.QR_DEBUG_KEEP]:
             file.unlink()
@@ -126,22 +268,35 @@ def _save_debug_frame(frame) -> Optional[str]:
         return None
 
 
-def scan_now(window_s: float = config.QR_SCAN_WINDOW_S) -> Optional[QRResult]:
-    """Reads the newest frames of the running stream until a QR code is found or window_s is over.
-    Returns None if there is no QR code. Raises RuntimeError if the camera isn't running."""
-    with _lock:
-        if _picam is None:
-            raise RuntimeError("Ribbon cam is not running (live preview open?)")
-        end = time.monotonic() + window_s
+def scan_now(signal_time: float | None = None, window_s: float = config.QR_SCAN_WINDOW_S) -> Optional[QRResult]:
+    """Which QR code is in front of the camera at the door opening (signal_time = time.monotonic() of the door signal)?
+
+    Accepts a code seen from QR_RECENT_S BEFORE the signal (usually it's already there -> answer immediately)
+    up to window_s AFTER the signal. Waits until a frame from the end of that window was scanned, so the whole
+    window is really covered. Returns the first code seen in that window, or None.
+    Raises RuntimeError if the ribbon cam isn't running."""
+    if signal_time is None:
+        signal_time = time.monotonic()
+    window_start = signal_time - config.QR_RECENT_S
+    window_end = signal_time + window_s
+    give_up = window_end + config.QR_SCAN_GRACE_S    # scanning one frame can take a moment on the Pi
+
+    with _cond:
         while True:
-            frame = _picam.capture_array()
-            result = scan_frame(frame)
-            if result is not None:
-                if result.reader != "zbar":
-                    logging.info("  details: QR code only readable with the '%s' reader", result.reader)
-                return result
-            if time.monotonic() >= end:
-                saved = _save_debug_frame(frame)
-                if saved:
-                    logging.info("  details: no QR code - ribbon cam picture saved as %s/%s", config.QR_DEBUG_DIR.name, saved)
-                return None
+            if not is_running():
+                raise RuntimeError("Ribbon cam is not running (live preview open?)")
+            for hit in _hits:
+                if window_start <= hit.seen_at <= window_end:
+                    if hit.reader != "zbar":
+                        logging.info("  details: QR code only readable with the '%s' reader", hit.reader)
+                    return hit
+            if _last_frame_time >= window_end or time.monotonic() >= give_up:
+                frame = _last_frame
+                break
+            _cond.wait(timeout=0.5)
+
+    if frame is not None:
+        saved = _save_debug_frame(frame)
+        if saved:
+            logging.info("  details: no QR code - ribbon cam picture saved as %s/%s", config.QR_DEBUG_DIR.name, saved)
+    return None

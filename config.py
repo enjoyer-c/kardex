@@ -47,9 +47,14 @@ MAX_IMAGES_PER_TRAY = 3
 
 # --- QR-Code-Cam -----------------------------------------------------------
 QR_CAPTURE_SIZE = (1332, 990)   
-# The ribbon cam runs permanently. When the door opens, it looks for a QR code for at most this long -
-# the tray still stands ~2.5 s after the door opens, and the USB photos are already taken before the scan starts.
-QR_SCAN_WINDOW_S = 1.5
+# The ribbon cam runs AND is scanned permanently (see qr_code_scanner.py). At a door opening, a QR code counts if it
+# was seen between QR_RECENT_S before and QR_SCAN_WINDOW_S after the door signal (the tray still stands ~2.5 s).
+QR_SCAN_WINDOW_S = 2.0
+QR_RECENT_S = 1.0
+QR_SCAN_GRACE_S = 2.0                   # extra time to finish scanning the last frame of the window (scanning is slower on the Pi)
+QR_SCAN_INTERVAL_S = 0.1                # minimum time between two scans (usually the scan itself takes longer)
+QR_GONE_S = 1.0                         # log "QR code out of view" only after this long without a code
+QR_CAMERA_RESTART_AFTER = 5             # restart the ribbon cam after this many failed frames in a row
 QR_DEBUG_KEEP = 20                      # no QR code found -> the ribbon cam picture is saved in QR_DEBUG_DIR, newest 20 are kept
 
 # --- Door-Sensor -----------------------------------------------------------
@@ -89,4 +94,5 @@ LENS_ZOOM = 2     # magnification relative to the preview (~2 = about the origin
 # --- Logging ----------------------------------------------------------
 LOG_DIR = SSD_DIR / "logs"
 LOG_FILE = LOG_DIR / "kardex.log"
+LOCK_FILE = Path("/tmp/kardex.lock")      # prevents the program from running twice (see main.py)
 QR_DEBUG_DIR = LOG_DIR / "qr_debug"     # ribbon cam pictures of scans without a QR code (see QR_DEBUG_KEEP)

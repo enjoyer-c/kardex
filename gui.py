@@ -1,20 +1,30 @@
 """
 GUI Layout:
-Section 1: Hints (left) - Search bar (center) - error banner - Buttons
+Section 1: Hints (left) - Search bar (center) - error banner (only if
+    there's a problem) - Manual Capture / History / Camera Setup buttons
 
-Section 2: Resizable split between:
-    - Top pane: Table listing all tray's, scrollable
-    - Bottom pane: Live image preview of the selected tray's last capture 
+Section 2: Resizable split (ttk.Panedwindow, vertical) between:
+    - Top pane: Table listing all tray's (1-50), scrollable
+    - Bottom pane: Live image preview of the selected tray's last
+      capture - updates automatically on click OR arrow-key
+      navigation (Treeview's <<TreeviewSelect>> event covers both)
 
 *functions:
     - History open seperate popup-Window
     - Right-clicking on a row allows to rename descriptions
     - search inventory
-    - selecting a row live-loads its last captured image in the preview pane below the table
-    - manual capture: opens a small popup to enter a tray number and trigger a capture (fallback)
-    - camera setup: 
-        - Snapshot from each connected USB camera
-        - Live ribbon-cam preview
+    - selecting a row (click or arrow keys) live-loads its last
+      captured image in the preview pane below the table
+    - manual capture: opens a small popup to enter a tray number and
+      trigger a capture without waiting for the automatic door-sensor
+      flow (meant as a fallback, e.g. if the door magnet/sensor fails)
+    - camera setup: opens a popup showing a snapshot from each
+      connected USB camera so the user can visually identify them and
+      set their left-to-right capture order - needed because a device
+      path alone doesn't say which physical camera is which, and the
+      order isn't stable if cameras get unplugged/swapped. Also has a
+      button to launch a live ribbon-cam preview (separate process,
+      for QR focus/positioning)
 """
 
 from __future__ import annotations
@@ -37,7 +47,8 @@ import logging
 import camera_setup
 
 
-
+# The Pi taskbar finds a window's icon via its window NAME ("kardex" = kardex.desktop). The main window is called
+# "kardex" (className="Kardex" in main.py), popups would get "!toplevel" -> no icon. See App._new_popup.
 POPUP_WINDOW_NAME = "kardex"
 POPUP_WINDOW_CLASS = "Kardex"
 
@@ -687,6 +698,7 @@ class App:
             messagebox.showerror("Camera Setup", f"Could not be saved:\n\n{exc}", parent=self._camera_setup_window)
             return
         self.log_event(f"Camera Setup saved - seam overlaps {overlaps} px")
+        self.clear_error("camera_order")
         self._close_camera_setup_window()
 
     def _launch_ribbon_cam_preview(self) -> None:

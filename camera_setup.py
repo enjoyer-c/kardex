@@ -10,7 +10,7 @@ import time
 import config
 import camera_capture
 import camera_streams
-
+# Re-exported, so the GUI can use them without importing camera_capture
 load_seam_overlaps = camera_capture.load_seam_overlaps
 save_seam_overlaps = camera_capture.save_seam_overlaps
 crop_and_combine = camera_capture.crop_and_combine
@@ -40,8 +40,17 @@ def _connected_camera_paths() -> list[str]:
 def get_camera_devices() -> list[str]:
     """The camera devices to capture with, in left-to-right order: the order saved via Camera Setup, or all connected cameras in by-path order as a fallback.
     Read fresh on every call, so a newly saved order is used right away without any restart.
+    If a saved camera isn't connected any more (e.g. plugged into another USB port), the connected cameras are used
+    instead - a picture in possibly wrong order is better than no picture (check_saved_order warns about it at startup).
     """
-    return load_camera_order() or _connected_camera_paths()
+    saved = load_camera_order()
+    if not saved:
+        return _connected_camera_paths()
+    if Path("/dev/v4l/by-path").exists():
+        connected = _connected_camera_paths()
+        if connected and any(device not in connected for device in saved):
+            return connected
+    return saved
 
 
 def start_camera_streams() -> None:
@@ -58,7 +67,7 @@ def stop_camera_streams() -> None:
 def discover_cameras(max_cameras: int = 4) -> dict[str, "cv2.typing.MatLike"]:
     """Returns {device path: preview frame} for all connected USB cameras that deliver frames, in discovery order.
 
-    Takes the frames from the permanently running streams. no camera is opened or closed here, so this
+    Takes the frames from the permanently running streams - no camera is opened or closed here, so this
     doesn't disturb a capture and is fast. Newly plugged-in cameras get a stream, unplugged ones lose theirs.
     Only waits (up to USB_CAMERA_FIRST_FRAME_TIMEOUT_S) for streams that were just started.
     """
@@ -126,7 +135,8 @@ def check_saved_order() -> str | None:
         parts.append("missing: " + ", ".join(short_name(d) for d in missing))
     if new:
         parts.append("new: " + ", ".join(short_name(d) for d in new))
-    return "Camera order changed (" + "; ".join(parts) + ") - please check Camera Setup."
+    fallback = " - until then the connected cameras are used in USB port order" if missing else ""
+    return "Camera order changed (" + "; ".join(parts) + ") - please check Camera Setup" + fallback + "."
 
 
 def short_name(device: str) -> str:

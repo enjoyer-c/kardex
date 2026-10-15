@@ -15,6 +15,23 @@ import cv2
 
 import config
 
+def apply_controls(device: str) -> None:
+    """Sets USB_CAMERA_CONTROLS via v4l2-ctl - one call per control, in dict order
+    (the C920 rejects focus_absolute while autofocus is still on)."""
+    if not sys.platform.startswith("linux"):
+        return   # Windows dev: no v4l2-ctl
+    for name, value in config.USB_CAMERA_CONTROLS.items():
+        try:
+            result = subprocess.run(
+                ["v4l2-ctl", "-d", device, "-c", f"{name}={value}"],
+                capture_output=True, text=True, timeout=2,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            logging.warning("Camera control %s=%s could not be set (%s): %s", name, value, exc, device)
+            continue
+        if result.returncode != 0:
+            logging.warning("Camera control %s=%s failed (%s): %s", name, value, result.stderr.strip(), device)
+
 
 def open_camera(device: str) -> cv2.VideoCapture:
     cam = cv2.VideoCapture(device, config.CAP_BACKEND)
@@ -23,6 +40,8 @@ def open_camera(device: str) -> cv2.VideoCapture:
     cam.set(cv2.CAP_PROP_FRAME_HEIGHT, config.USB_CAMERA_RESOLUTION[1])
     if config.USB_CAMERA_FPS:
         cam.set(cv2.CAP_PROP_FPS, config.USB_CAMERA_FPS)
+    if cam.isOpened():
+        apply_controls(device)
     return cam
 
 

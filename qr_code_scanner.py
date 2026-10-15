@@ -18,7 +18,6 @@ Note on colors: picamera2's "RGB888" format delivers the pixels in B, G, R order
 """
 
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Optional
 import logging
 import threading
@@ -119,8 +118,7 @@ _thread: threading.Thread | None = None
 
 # Shared between the scan loop and scan_now - always accessed with _cond held
 _cond = threading.Condition()
-_last_frame = None              # newest scanned frame (for the debug picture)
-_last_frame_time = 0.0          # time.monotonic() when it was taken
+_last_frame_time = 0.0          # time.monotonic() when the newest scanned frame was taken
 _hits: list[QRResult] = []      # QR codes seen in the last seconds (oldest first)
 
 
@@ -148,7 +146,7 @@ def _close_camera(picam) -> None:
 def _scan_loop() -> None:
     """Background thread: newest frame -> scan -> remember the result. Runs until stop_stream().
     Never dies on an error: camera errors lead to a camera restart, everything else is logged and the loop continues."""
-    global _picam, _last_frame, _last_frame_time
+    global _picam, _last_frame_time
     errors_in_a_row = 0
     visible: str | None = None      # QR content currently in view (for the "in view / out of view" log lines)
     last_seen = 0.0
@@ -181,7 +179,7 @@ def _scan_loop() -> None:
             result = None
 
         with _cond:
-            _last_frame, _last_frame_time = frame, taken
+            _last_frame_time = taken
             if result is not None:
                 result.seen_at = taken
                 _hits.append(result)
@@ -252,22 +250,6 @@ def is_running() -> bool:
 
 # --- Door opening -------------------------------------------------------------------
 
-def _save_debug_frame(frame) -> Optional[str]:
-    """Saves what the ribbon cam saw when no QR code was found, so it can be checked afterwards.
-    Keeps only the newest QR_DEBUG_KEEP pictures. Returns the file name, or None if saving failed."""
-    try:
-        config.QR_DEBUG_DIR.mkdir(parents=True, exist_ok=True)
-        path = config.QR_DEBUG_DIR / f"no_qr_{datetime.now().strftime(config.TIMESTAMP_FORMAT)}.jpg"
-        cv2.imwrite(str(path), frame)
-        old = sorted(config.QR_DEBUG_DIR.glob("no_qr_*.jpg"))
-        for file in old[:-config.QR_DEBUG_KEEP]:
-            file.unlink()
-        return path.name
-    except Exception:
-        logging.exception("Could not save the QR debug picture")
-        return None
-
-
 def scan_now(signal_time: float | None = None, window_s: float = config.QR_SCAN_WINDOW_S) -> Optional[QRResult]:
     """Which QR code is in front of the camera at the door opening (signal_time = time.monotonic() of the door signal)?
 
@@ -291,12 +273,5 @@ def scan_now(signal_time: float | None = None, window_s: float = config.QR_SCAN_
                         logging.info("  details: QR code only readable with the '%s' reader", hit.reader)
                     return hit
             if _last_frame_time >= window_end or time.monotonic() >= give_up:
-                frame = _last_frame
-                break
+                return None
             _cond.wait(timeout=0.5)
-
-    if frame is not None:
-        saved = _save_debug_frame(frame)
-        if saved:
-            logging.info("  details: no QR code - ribbon cam picture saved as %s/%s", config.QR_DEBUG_DIR.name, saved)
-    return None

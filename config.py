@@ -38,6 +38,15 @@ USB_CAMERA_RECONNECT_S = 2.0            # pause before a lost/unplugged camera i
 USB_CAMERA_FIRST_FRAME_TIMEOUT_S = 5.0  # max wait for the first frame of a JUST started stream [s]
 CAMERA_SETUP_PREVIEW_REFRESH_MS = 500   # how often the Camera Setup window updates its camera pictures [ms]
 
+   # Fixed camera settings - the automatics make every camera look different
+USB_CAMERA_CONTROLS = {
+       "focus_automatic_continuous": 0,   # autofocus off (must come before focus_absolute)
+       "focus_absolute": 30,              # 0 = infinity, higher = closer
+       "white_balance_automatic": 0,
+       "white_balance_temperature": 4000,
+       "exposure_dynamic_framerate": 0,   # frame rate must not drop in low light
+    }
+
 # --- Combining the camera images --------------------------------------------
 # Overlap per seam between neighbouring cameras in pixels (one value less than cameras) - see camera_capture.py.
 # These are only the defaults: the values set in the Camera Setup window are saved in SETTINGS_FILE and used from then on.
@@ -55,7 +64,6 @@ QR_SCAN_GRACE_S = 2.0                   # extra time to finish scanning the last
 QR_SCAN_INTERVAL_S = 0.1                # minimum time between two scans (usually the scan itself takes longer)
 QR_GONE_S = 1.0                         # log "QR code out of view" only after this long without a code
 QR_CAMERA_RESTART_AFTER = 5             # restart the ribbon cam after this many failed frames in a row
-QR_DEBUG_KEEP = 20                      # no QR code found -> the ribbon cam picture is saved in QR_DEBUG_DIR, newest 20 are kept
 
 # --- Door-Sensor -----------------------------------------------------------
 DOOR_SENSOR_GPIO = 17 #Pin11
@@ -95,4 +103,4 @@ LENS_ZOOM = 2     # magnification relative to the preview (~2 = about the origin
 LOG_DIR = SSD_DIR / "logs"
 LOG_FILE = LOG_DIR / "kardex.log"
 LOCK_FILE = Path("/tmp/kardex.lock")      # prevents the program from running twice (see main.py)
-QR_DEBUG_DIR = LOG_DIR / "qr_debug"     # ribbon cam pictures of scans without a QR code (see QR_DEBUG_KEEP)
+QR_DEBUG_DIR = LOG_DIR / "qr_debug"     # pictures saved with 's' in the ribbon cam live preview

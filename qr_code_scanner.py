@@ -5,11 +5,10 @@ The camera runs permanently AND is scanned permanently: a background thread read
 a QR code (see _scan_loop). So when the door opens, the answer is usually already there - scan_now() only has to look
 at what the loop has seen around the door signal, it never starts the camera or waits for exposure.
 
-Several QR readers are tried one after another (see scan_frame), because each one fails on different pictures
-(reflections, small white border around the code, slight angle). Optional readers are used if they are installed:
-    zxing-cpp      pip install zxing-cpp         (very robust)
-    opencv-aruco   OpenCV >= 4.7                 (read the label on metal that zbar and the normal OpenCV reader missed)
-Which readers are active is written to the log when the stream starts.
+Two QR readers, one after another (see scan_frame) - each one fails on different pictures:
+    aruco   OpenCV's QRCodeDetectorAruco (OpenCV >= 4.7) - reads our labels on the reflective metal best
+    zbar    pyzbar - fallback, often reads the code first while the tray is arriving
+Which readers are active is written to the log when the stream starts (without aruco = OpenCV too old).
 
 Only the ribbon-cam live preview (Camera Setup) stops the stream for a while, because two programs can't use the
 camera at the same time - see stop_stream / start_stream.
@@ -35,25 +34,26 @@ try:
 except (ImportError, ModuleNotFoundError):
     HAS_PICAMERA = False
 
-try:
-    import zxingcpp
-except (ImportError, ModuleNotFoundError):
-    zxingcpp = None
-
-
 @dataclass
 class QRResult:
     data: str
     qr_type: str
-    reader: str = "zbar"          # which reader found it (see scan_frame) - for the log
+    reader: str = "aruco"         # which reader found it (see scan_frame) - for the log
     points: list | None = None    # corners [(x, y), ...] in the frame, if the reader reports them (live preview outline)
     seen_at: float = 0.0          # time.monotonic() when the frame was taken
 
 
 # --- Readers ------------------------------------------------------------------------
 
-_cv2_qr_detector = cv2.QRCodeDetector()
-_cv2_aruco_detector = cv2.QRCodeDetectorAruco() if hasattr(cv2, "QRCodeDetectorAruco") else None
+_aruco_detector = cv2.QRCodeDetectorAruco() if hasattr(cv2, "QRCodeDetectorAruco") else None
+
+
+def _aruco(gray):
+    data, points, _ = _aruco_detector.detectAndDecode(gray)
+    if not data:
+        return None
+    corners = [(int(x), int(y)) for x, y in points.reshape(-1, 2)] if points is not None else None
+    return data, corners
 
 
 def _zbar(gray):
@@ -63,30 +63,9 @@ def _zbar(gray):
     return None
 
 
-def _zxing(gray):
-    for r in zxingcpp.read_barcodes(gray):
-        if "QR" in str(r.format) and r.text:
-            return r.text, None
-    return None
-
-
-def _opencv_with(detector):
-    def read(gray):
-        data, points, _ = detector.detectAndDecode(gray)
-        if not data:
-            return None
-        corners = [(int(x), int(y)) for x, y in points.reshape(-1, 2)] if points is not None else None
-        return data, corners
-    return read
-
-
-# Order = fastest / most reliable first. The others only run if the ones before found nothing.
-READERS = [("zbar", _zbar)]
-if zxingcpp is not None:
-    READERS.append(("zxing", _zxing))
-if _cv2_aruco_detector is not None:
-    READERS.append(("opencv-aruco", _opencv_with(_cv2_aruco_detector)))
-READERS.append(("opencv", _opencv_with(_cv2_qr_detector)))
+# Order: main reader first, the fallback only runs if it found nothing
+READERS = [("aruco", _aruco), ("zbar", _zbar)] if _aruco_detector is not None else [("zbar", _zbar)]
+MAIN_READER = READERS[0][0]
 
 
 def reader_names() -> str:
@@ -224,6 +203,8 @@ def start_stream() -> Optional[str]:
         _thread = threading.Thread(target=_scan_loop, name="qr-scan", daemon=True)
         _thread.start()
     logging.info("Ribbon cam stream started (QR readers: %s)", reader_names())
+    if _aruco_detector is None:
+        logging.warning("OpenCV %s has no aruco QR reader (needs >= 4.7) - only zbar is used", cv2.__version__)
     return None
 
 
@@ -269,8 +250,6 @@ def scan_now(signal_time: float | None = None, window_s: float = config.QR_SCAN_
                 raise RuntimeError("Ribbon cam is not running (live preview open?)")
             for hit in _hits:
                 if window_start <= hit.seen_at <= window_end:
-                    if hit.reader != "zbar":
-                        logging.info("  details: QR code only readable with the '%s' reader", hit.reader)
                     return hit
             if _last_frame_time >= window_end or time.monotonic() >= give_up:
                 return None

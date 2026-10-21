@@ -5,8 +5,8 @@ when the door opens. A green outline is drawn around the code (if the reader rep
 reader name and the time one scan took. Press 's' to save the current picture (for checking it afterwards).
 
 Status line:
-    green   read by zbar (the fast standard reader)
-    yellow  only readable by a fallback reader - works, but better improve position/light
+    green   read by the main reader (aruco)
+    yellow  only readable by the fallback reader (zbar) - works, but better improve position/light
     red     not readable
 
 Started from Camera Setup in main.py, which releases its own ribbon cam stream for it and restarts it when this window closes.
@@ -55,7 +55,7 @@ def main() -> None:
             if result is None:
                 _put_status(frame, f"QR: not readable  ({scan_ms:.0f} ms)", RED)
             else:
-                color = GREEN if result.reader == "zbar" else YELLOW
+                color = GREEN if result.reader == qr_code_scanner.MAIN_READER else YELLOW
                 _put_status(frame, f"QR: '{result.data}' read by {result.reader}  ({scan_ms:.0f} ms)", color)
                 if result.points:
                     pts = result.points

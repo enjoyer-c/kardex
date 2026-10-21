@@ -75,7 +75,9 @@ def reader_names() -> str:
 def scan_frame(frame) -> Optional[QRResult]:
     """Looks for a QR code in a single frame (BGR array from picamera2). Returns the first QR code found, or None.
     A reader that crashes is skipped - the next one still gets its chance."""
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    # COLOR_RGB2GRAY on a BGR frame weights blue a bit more than the "correct" BGR2GRAY - kept exactly as in the
+    # old v0.2 scanner, which read all labels with this conversion
+    gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
     for name, read in READERS:
         try:
             found = read(gray)
@@ -114,7 +116,11 @@ def ribbon_camera_num() -> int:
 def _open_camera() -> "Picamera2":
     picam = Picamera2(ribbon_camera_num())
     try:
-        picam.configure(picam.create_video_configuration(
+        # STILL configuration (like the old program), not video: libcamera then reads the full sensor and scales down
+        # with high-quality noise reduction. The video configuration picks a fast, lower-quality sensor mode -
+        # sharp enough for a person, but some QR codes became unreadable. The lower frame rate doesn't matter,
+        # one scan takes longer than one frame anyway.
+        picam.configure(picam.create_still_configuration(
             main={"size": config.QR_CAPTURE_SIZE, "format": "RGB888"}
         ))
         picam.start()
@@ -143,7 +149,8 @@ def _scan_loop() -> None:
     while not _stop_event.is_set():
         loop_start = time.monotonic()
         try:
-            frame = _picam.capture_array()
+            # With a timeout: a hanging camera then counts as an error (-> restart) instead of freezing the loop forever
+            frame = _picam.capture_array(wait=config.QR_FRAME_TIMEOUT_S)
             taken = time.monotonic()
             errors_in_a_row = 0
         except Exception as exc:
@@ -196,7 +203,7 @@ def _scan_loop() -> None:
 def start_stream() -> Optional[str]:
     """Opens the ribbon camera and starts the permanent scanning. Returns None on success, otherwise an error text.
     Does nothing if it's already running."""
-    global _picam, _thread
+    global _picam, _thread, _last_frame_time
     if not HAS_PICAMERA:
         return "picamera2 is not installed - trays can't be detected"
     with _start_stop_lock:
@@ -209,6 +216,7 @@ def start_stream() -> Optional[str]:
             return f"Ribbon cam could not be started: {exc}"
         with _cond:
             _hits.clear()
+            _last_frame_time = time.monotonic()   # fresh start - the watchdog in scan_now must not fire right away
         _stop_event.clear()
         _thread = threading.Thread(target=_scan_loop, name="qr-scan", daemon=True)
         _thread.start()
@@ -261,6 +269,9 @@ def scan_now(signal_time: float | None = None, window_s: float = config.QR_SCAN_
             for hit in _hits:
                 if window_start <= hit.seen_at <= window_end:
                     return hit
+            # Watchdog: without fresh frames "no QR code" would be a lie - report it as an error instead (red banner)
+            if time.monotonic() - _last_frame_time > config.QR_FRAME_TIMEOUT_S + config.QR_SCAN_GRACE_S:
+                raise RuntimeError("Ribbon cam delivers no frames - it is being restarted")
             if _last_frame_time >= window_end or time.monotonic() >= give_up:
                 return None
             _cond.wait(timeout=0.5)

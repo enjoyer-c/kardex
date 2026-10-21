@@ -1,3 +1,4 @@
 {
-  "panorama_mode": "side_by_side"
+  "panorama_mode": "side_by_side",
+  "seam_overlap_px": [520, 414, 376]
 }

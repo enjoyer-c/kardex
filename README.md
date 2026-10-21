@@ -87,4 +87,5 @@ Reads/writes `inventory.txt`. Writes are crash-safe (temp file + `os.replace`). 
 - While the ribbon cam live preview is open, no automatic photos are taken (red banner)
 - The Windows QR mock always returns tray 1, so "tray gone" can't be tested on Windows
 - Temporary Buttons and functions
+- The outer right USB camera vibrates slightly when the door opens or the lift moves - its part of the picture can be a little blurred
 - All USB cameras stream permanently - with many cameras on one USB controller the bandwidth can run out (camera fails to open). Then lower `USB_CAMERA_FPS` or spread the cameras over different USB ports

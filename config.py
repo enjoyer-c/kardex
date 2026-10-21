@@ -37,11 +37,12 @@ USB_CAMERA_MAX_FRAME_AGE_S = 1.0        # a frame older than this is never used 
 USB_CAMERA_RECONNECT_S = 2.0            # pause before a lost/unplugged camera is opened again [s]
 USB_CAMERA_FIRST_FRAME_TIMEOUT_S = 5.0  # max wait for the first frame of a JUST started stream [s]
 CAMERA_SETUP_PREVIEW_REFRESH_MS = 500   # how often the Camera Setup window updates its camera pictures [ms]
+ROTATE_IMAGE_180 = True   # cameras see the tray upside down - turn the final picture
 
    # Fixed camera settings - the automatics make every camera look different
 USB_CAMERA_CONTROLS = {
-       "focus_automatic_continuous": 0,   # autofocus off (must come before focus_absolute)
-       "focus_absolute": 30,              # 0 = infinity, higher = closer
+       "focus_automatic_continuous": 0,   # autofocus off
+       "focus_absolute": 0,              # 0 = infinity, higher = closer
        "white_balance_automatic": 0,
        "white_balance_temperature": 4000,
        "exposure_dynamic_framerate": 0,   # frame rate must not drop in low light
@@ -64,6 +65,7 @@ QR_SCAN_GRACE_S = 2.0                   # extra time to finish scanning the last
 QR_SCAN_INTERVAL_S = 0.1                # minimum time between two scans (usually the scan itself takes longer)
 QR_GONE_S = 1.0                         # log "QR code out of view" only after this long without a code
 QR_CAMERA_RESTART_AFTER = 5             # restart the ribbon cam after this many failed frames in a row
+QR_FRAME_TIMEOUT_S = 3.0               # a frame that takes longer counts as a camera error
 
 # --- Door-Sensor -----------------------------------------------------------
 DOOR_SENSOR_GPIO = 17 #Pin11

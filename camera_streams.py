@@ -127,6 +127,8 @@ class CameraStream:
 
         if not ok or frame is None:
             return None, f"Camera frame could not be decoded: {self.device}"
+        if config.ROTATE_IMAGE_180:
+            frame = cv2.rotate(frame, cv2.ROTATE_180)
         return frame, None
 
 

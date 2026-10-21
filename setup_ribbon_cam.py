@@ -35,7 +35,7 @@ def _put_status(frame, text: str, color) -> None:
 
 
 def main() -> None:
-    picam = Picamera2()
+    picam = Picamera2(qr_code_scanner.ribbon_camera_num())
     preview_config = picam.create_preview_configuration(
         main={"size": config.QR_CAPTURE_SIZE, "format": "RGB888"}
     )

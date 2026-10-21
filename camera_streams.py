@@ -6,6 +6,8 @@ grab() only fetches the raw frame from the driver, retrieve() decodes it.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 import logging
 import threading
 import time

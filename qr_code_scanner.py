@@ -101,8 +101,18 @@ _last_frame_time = 0.0          # time.monotonic() when the newest scanned frame
 _hits: list[QRResult] = []      # QR codes seen in the last seconds (oldest first)
 
 
+def ribbon_camera_num() -> int:
+    """Index of the ribbon cam for Picamera2. libcamera also lists the USB webcams - Picamera2() alone could pick
+    one of them (e.g. when the ribbon cam isn't connected) and then block it for the USB photos.
+    Raises RuntimeError if no ribbon cam is connected."""
+    for info in Picamera2.global_camera_info():
+        if "usb" not in str(info.get("Id", "")).lower():
+            return info["Num"]
+    raise RuntimeError("no ribbon cam found (only USB cameras connected)")
+
+
 def _open_camera() -> "Picamera2":
-    picam = Picamera2()
+    picam = Picamera2(ribbon_camera_num())
     try:
         picam.configure(picam.create_video_configuration(
             main={"size": config.QR_CAPTURE_SIZE, "format": "RGB888"}

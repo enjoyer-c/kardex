@@ -147,22 +147,15 @@ def short_name(device: str) -> str:
 
 
 def load_camera_order() -> list[str]:
-    """Returns the saved camera order, or an empty list if none has been saved yet.
-    """
-    if not config.CAMERA_ORDER_FILE.exists():
-        return []
-    try:
-        with open(config.CAMERA_ORDER_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        devices = data.get("devices", [])
-        if isinstance(devices, list) and all(isinstance(d, str) for d in devices):
-            return devices
-    except (json.JSONDecodeError, OSError):
-        pass
+    """Returns the saved camera order, or an empty list if none has been saved yet."""
+    order = camera_capture.read_settings().get("camera_order", [])
+    if isinstance(order, list) and all(isinstance(d, str) for d in order):
+        return order
     return []
 
 
 def save_camera_order(order: list[str]) -> None:
-    config.CAMERA_ORDER_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(config.CAMERA_ORDER_FILE, "w", encoding="utf-8") as f:
-        json.dump({"devices": order}, f, indent=2)
+    """Saves the camera order from Camera Setup. Other keys in the settings file are kept. Raises OSError if it can't be written."""
+    settings = camera_capture.read_settings()
+    settings["camera_order"] = order
+    camera_capture.write_settings(settings)

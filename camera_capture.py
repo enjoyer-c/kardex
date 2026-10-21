@@ -48,7 +48,8 @@ class FrameSet:
 
 # --- Overlap values (one per seam) -----------------------------------------------
 
-def _read_settings() -> dict:
+def read_settings() -> dict:
+    """The whole settings file as a dict - empty if it doesn't exist (yet) or is broken."""
     try:
         with open(config.SETTINGS_FILE, "r", encoding="utf-8") as f:
             settings = json.load(f)
@@ -57,10 +58,17 @@ def _read_settings() -> dict:
         return {}
 
 
+def write_settings(settings: dict) -> None:
+    """Writes the whole settings file. Raises OSError if it can't be written."""
+    config.SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(config.SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=2)
+
+
 def load_seam_overlaps() -> list[int]:
     """Overlap per seam - as saved in Camera Setup, otherwise the defaults from config.py.
     Read fresh on every capture, so a change in Camera Setup applies to the very next photo."""
-    overlaps = _read_settings().get("seam_overlap_px")
+    overlaps = read_settings().get("seam_overlap_px")
     if isinstance(overlaps, list) and all(isinstance(v, int) for v in overlaps):
         return overlaps
     return list(config.SEAM_OVERLAP_PX)
@@ -68,11 +76,9 @@ def load_seam_overlaps() -> list[int]:
 
 def save_seam_overlaps(overlaps: list[int]) -> None:
     """Saves the overlaps from Camera Setup. Other keys in the settings file are kept."""
-    settings = _read_settings()
+    settings = read_settings()
     settings["seam_overlap_px"] = [int(v) for v in overlaps]
-    config.SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(config.SETTINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(settings, f, indent=2)
+    write_settings(settings)
 
 
 # --- Combining --------------------------------------------------------------------

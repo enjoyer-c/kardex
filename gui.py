@@ -1,49 +1,40 @@
 """
-GUI Layout:
-Section 1: Hints (left) - Search bar (center) - error banner (only if
-    there's a problem) - Manual Capture / History / Camera Setup buttons
+Tkinter GUI of the Kardex Content Tracker.
 
-Section 2: Resizable split (ttk.Panedwindow, vertical) between:
-    - Top pane: Table listing all tray's (1-50), scrollable
-    - Bottom pane: Live image preview of the selected tray's last
-      capture - updates automatically on click OR arrow-key
-      navigation (Treeview's <<TreeviewSelect>> event covers both)
+Layout:
+    Section 1 (top): hints on the left, search bar in the center, red error banner (only if there's a problem),
+        buttons Manual Capture / History / Camera Setup on the right
+    Section 2: resizable split (ttk.Panedwindow, vertical)
+        - top pane: table of all trays with description and date of the last capture, scrollable
+        - bottom pane: preview of the selected tray's last capture, updates on click or arrow keys
 
-*functions:
-    - History open seperate popup-Window
-    - Right-clicking on a row allows to rename descriptions
-    - search inventory
-    - selecting a row (click or arrow keys) live-loads its last
-      captured image in the preview pane below the table
-    - manual capture: opens a small popup to enter a tray number and
-      trigger a capture without waiting for the automatic door-sensor
-      flow (meant as a fallback, e.g. if the door magnet/sensor fails)
-    - camera setup: opens a popup showing a snapshot from each
-      connected USB camera so the user can visually identify them and
-      set their left-to-right capture order - needed because a device
-      path alone doesn't say which physical camera is which, and the
-      order isn't stable if cameras get unplugged/swapped. Also has a
-      button to launch a live ribbon-cam preview (separate process,
-      for QR focus/positioning)
+Functions:
+    - search the inventory
+    - right-click on a row: rename the description
+    - hold the left mouse button on the preview: magnifier
+    - History: popup with the log entries
+    - Manual Capture: popup to take photos for a tray number by hand (fallback if the door sensor fails)
+    - Camera Setup: popup with live pictures of every USB camera to set their left-to-right order and the
+      overlap per seam, plus a button for the ribbon cam live preview (separate process, for QR focus)
 """
 
 from __future__ import annotations
 from collections import deque
-import tkinter as tk
-from tkinter import ttk, simpledialog, messagebox
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
-
-from PIL import Image, ImageDraw, ImageTk
-import cv2
+import logging
 import subprocess
 import sys
 import threading
+import tkinter as tk
+from tkinter import ttk, simpledialog, messagebox
+
+from PIL import Image, ImageDraw, ImageTk
+import cv2
 
 import config
 import inventory
-import logging
 import camera_setup
 
 
@@ -54,11 +45,11 @@ POPUP_WINDOW_CLASS = "Kardex"
 
 
 class _RenameDialog(simpledialog.Dialog):
-    """Like simpledialog.askstring, but with a much wider entry field -
-    the standard dialog's field is too short for longer descriptions."""
+    """Like simpledialog.askstring, but with a much wider entry field,
+    because the standard dialog's field is too short for longer descriptions."""
 
     def __init__(self, parent, title: str, prompt: str, initial_value: str):
-        # Must be set BEFORE super().__init__ - that already builds and shows the dialog
+        # Must be set before super().__init__, because that already builds and shows the dialog
         self._prompt = prompt
         self._initial_value = initial_value
         super().__init__(parent, title)
@@ -72,7 +63,7 @@ class _RenameDialog(simpledialog.Dialog):
         return self._entry                   # this widget gets the focus
 
     def apply(self):
-        # Only called on OK / Enter - on Cancel / Escape, self.result stays None
+        # Only called on OK / Enter. On Cancel / Escape, self.result stays None
         self.result = self._entry.get()
 
 
@@ -92,7 +83,7 @@ class App:
         self._preview_after_id: Optional[str] = None
         self._preview_photo = None
 
-        # Image preview: the full-resolution image stays in memory - the preview is scaled from it
+        # Image preview: the full-resolution image stays in memory. The preview is scaled from it
         # to fit the pane, and the magnifier cuts its details out of it
         self._preview_full: Optional[Image.Image] = None
         self._preview_scale = 1.0                       # displayed size / original size
@@ -111,7 +102,12 @@ class App:
         self._camera_setup_photos: dict[str, ImageTk.PhotoImage] = {}
         self._camera_setup_slots_frame: Optional[ttk.Frame] = None
         self._camera_setup_status_var: Optional[tk.StringVar] = None
-        self._panorama_mode_var: Optional[tk.StringVar] = None
+        # Camera Setup: overlap per seam between neighbouring cameras
+        self._seam_overlaps: list[int] = []
+        self._overlap_vars: list[tk.IntVar] = []   # keeps the spinbox variables alive (Tk forgets them otherwise)
+        self._camera_setup_seams_frame: Optional[ttk.Frame] = None
+        self._combined_preview_label: Optional[ttk.Label] = None
+        self._combined_preview_photo: Optional[ImageTk.PhotoImage] = None
         self._camera_setup_save_button: Optional[ttk.Button] = None
         self._camera_discovery_running = False
         self._camera_setup_image_labels: dict[str, ttk.Label] = {}
@@ -119,18 +115,18 @@ class App:
         self._camera_preview_fetch_running = False
         self._ribbon_cam_process: Optional[subprocess.Popen] = None
 
-        # set from main.py - called when the user triggers a manual capture
+        # Set from main.py: called when the user triggers a manual capture
         self.on_manual_capture: Optional[Callable[[str], None]] = None
 
-        # set from main.py - release / restart the ribbon cam stream around the live preview.
+        # Set from main.py: release / restart the ribbon cam stream around the live preview.
         # ribbon_cam_restart returns None on success, otherwise an error text
         self.ribbon_cam_release: Optional[Callable[[], None]] = None
         self.ribbon_cam_restart: Optional[Callable[[], Optional[str]]] = None
 
-        # TEMP door test: set from main.py - simulates a door open/close
+        # TEMP door test: set from main.py, simulates a door open/close
         self.on_simulate_door: Optional[Callable[[], None]] = None
 
-        # One invisible holder per popup - see _new_popup
+        # One invisible holder per popup (see _new_popup)
         self._popup_holders: dict[str, tk.Frame] = {}
 
         self._button_icons: dict[str, ImageTk.PhotoImage] = {}
@@ -172,13 +168,12 @@ class App:
             font=("Arial", 11), fg="black", bg="white",
         ).pack(anchor="w")
         tk.Label(
-            hint_frame, text="• Hold left-click on image: Magnify", 
+            hint_frame, text="• Hold left-click on image: Magnify",
             font=("Arial", 11), fg="black", bg="white",
         ).pack(anchor="w")
 
-
         # Red error banner between the search and the buttons (column 2, over both rows).
-        # Hidden (grid_remove) as long as there's no persistent problem - see set_error / clear_error.
+        # Hidden (grid_remove) as long as there's no persistent problem (see set_error / clear_error).
         self.error_label = tk.Label(
             top_frame, text="", font=("Arial", 13, "bold"),
             bg="#c62828", fg="white", padx=15, pady=8, justify="left", wraplength=380,
@@ -203,14 +198,13 @@ class App:
             ).grid(row=1, column=3, padx=(0, 10), pady=(12, 0), sticky="e")
 
         stacked_button_width = 14
-        
+
         history_button = ttk.Button(
             top_frame, text="History", image=self._button_icons.get("history"),
             compound="left", command=self._open_history_window, style="Big.TButton",
             width=stacked_button_width,
         )
         history_button.grid(row=0, column=4, sticky="e")
-
 
         camera_setup_button = ttk.Button(
             top_frame, text="Camera Setup", image=self._button_icons.get("camera_setup"),
@@ -228,22 +222,19 @@ class App:
         search_entry.pack(side="left")
         search_entry.bind("<KeyRelease>", self._handle_search_change)
 
-        # Invisible mirror of the "search:" label on the right - without
-        # this, the entry box visually drifts right (the label only adds
-        # width on the left), so it looks off-center even though this
-        # whole frame is centered in the grid cell
+        # Invisible mirror of the "search:" label on the right. Without it, the entry box visually drifts right
+        # (the label only adds width on the left), so it looks off-center even though the whole frame is centered
         bg_color = style.lookup("TFrame", "background") or self.root.cget("bg")
         tk.Label(
             search_frame, text="search:", font=("Arial", 13), fg=bg_color, bg=bg_color
         ).pack(side="left", padx=(8, 0))
-
 
     # --- Error banner -----------------------------------------------------------
 
     def set_error(self, key: str, text: str) -> None:
         """Shows a persistent problem in the red banner (e.g. door sensor missing). The key identifies the problem,
         so it can be removed again with clear_error(key) once it's solved. Several problems are shown line by line.
-        Only for problems the user must notice - details belong in the History."""
+        Only for problems the user must notice. Details belong in the History."""
         self._errors[key] = text
         self._refresh_error_banner()
 
@@ -259,7 +250,7 @@ class App:
             self.error_label.grid_remove()
 
     def _handle_search_change(self, event=None) -> None:
-        # Debounce: don't rebuild the table on every single keystroke, only 300ms after the user last typed
+        # Debounce: don't rebuild the table on every single keystroke, only SEARCH_DEBOUNCE_MS after the last one
         if self._search_after_id is not None:
             self.root.after_cancel(self._search_after_id)
 
@@ -283,12 +274,11 @@ class App:
     # --- Manual capture (popup window) ------------------------------------
 
     def _open_manual_capture_window(self) -> None:
-        """Opens a small popup to enter a tray number and trigger a
-        capture manually - kept out of the main view since this is a
-        fallback path, not something used in normal operation."""
+        """Opens a small popup to enter a tray number and trigger a capture manually.
+        Kept out of the main view, since this is a fallback, not something used in normal operation."""
 
         # Already open -> close and open it again. On the Pi (Wayland) a program can't bring its own
-        # window to the front - a NEW window is always shown on top, though.
+        # window to the front, but a NEW window is always shown on top.
         if self._manual_capture_window is not None and self._manual_capture_window.winfo_exists():
             self._manual_capture_window.destroy()
 
@@ -299,7 +289,7 @@ class App:
 
         ttk.Label(
             self._manual_capture_window,
-            text="Fallback only - use if the automatic\ndoor sensor didn't trigger correctly.",
+            text="Fallback only: use if the automatic\ndoor sensor didn't trigger correctly.",
             font=("Arial", 10),
             justify="center",
         ).pack(pady=(15, 10))
@@ -315,7 +305,8 @@ class App:
             self._manual_capture_window, text="Take a Picture", command=self._handle_manual_capture
         ).pack(pady=15)
 
-        # Bound to the whole window - focus_set() on a freshly created Toplevel isn't always reliable before the window is fully mapped, so binding only to the entry can miss the first Enter press
+        # Bound to the whole window: focus_set() on a freshly created Toplevel isn't always reliable before the window
+        # is fully mapped, so binding only to the entry could miss the first Enter press
         self._manual_capture_window.bind("<Return>", lambda event: self._handle_manual_capture())
 
         def _on_close() -> None:
@@ -333,9 +324,8 @@ class App:
             messagebox.showwarning("Input missing", "Please enter the tray number.", parent=self._manual_capture_window)
             return
 
-        # Only plain numbers within the tray limits - "01" becomes "1",
-        # letters/decimals/out-of-range get rejected. The popup stays
-        # open so the user can correct the input.
+        # Only plain numbers within the tray limits: "01" becomes "1", letters / decimals / out of range
+        # get rejected. The popup stays open so the user can correct the input.
         normalized = inventory.normalize_tray_number(tray_number)
         if normalized is None:
             messagebox.showwarning(
@@ -365,36 +355,38 @@ class App:
             self._bring_to_front(self._camera_setup_window)
             return
 
-        # Always allowed, in every state - a setup is usually done WITH the
-        # tray out, to check that the whole tray is in the picture. Collisions
-        # with a running capture are prevented by the camera lock instead.
+        # Always allowed, in every state: a setup is usually done WITH the tray out, to check that the whole
+        # tray is in the picture. It only reads frames from the running streams, so it never disturbs a capture.
 
-        # Start from the saved order - discovery results get merged into it
+        # Start from the saved order. Discovery results get merged into it
         # (cameras still connected keep their position, new ones are appended)
         self._camera_setup_order = camera_setup.load_camera_order()
         self._camera_setup_photos = {}
 
-        # The window opens IMMEDIATELY - the camera search runs in the
-        # background and fills in the slots once it's done
+        self._seam_overlaps = camera_setup.load_seam_overlaps()
+
+        # The window opens IMMEDIATELY. The camera search runs in the background and fills in the slots once it's done
         self._camera_setup_window = self._new_popup("camera_setup")
         self._camera_setup_window.title("Camera Setup")
         self._camera_setup_window.resizable(False, False)
 
-        # Layout: everything static (text, buttons, status) sits ABOVE the
-        # camera slots and is left-aligned (anchor="w"). When the cameras
-        # show up, the window only grows downwards/to the right - so none of
-        # these widgets ever has to move. (On the Pi, widgets that got moved
-        # by a window resize sometimes weren't redrawn until hovered.)
+        # Layout: everything static (text, buttons, status) sits ABOVE the camera slots and is left-aligned
+        # (anchor="w"). When the cameras show up, the window only grows downwards / to the right, so none of
+        # these widgets ever has to move. (On the Pi, widgets moved by a window resize sometimes weren't
+        # redrawn until hovered.)
         ttk.Label(
             self._camera_setup_window,
-            text="Identify each camera by its picture, then use the arrows to set left-to-right order.",
+            text="1. Identify each camera by its picture and set the left-to-right order with the arrows.\n"
+                 "2. Adjust the overlaps until the combined picture at the bottom looks continuous (red lines = seams).\n"
+                 "3. Save: applies from the next photo on.",
+            justify="left",
             font=("Arial", 11),
         ).pack(anchor="w", padx=15, pady=(15, 10))
 
         button_frame = ttk.Frame(self._camera_setup_window)
         button_frame.pack(anchor="w", padx=15, pady=(0, 10))
         self._camera_setup_save_button = ttk.Button(
-            button_frame, text="Save Order", command=self._save_camera_setup_order
+            button_frame, text="Save", command=self._save_camera_setup
         )
         self._camera_setup_save_button.pack(side="left", padx=(0, 5))
         ttk.Button(button_frame, text="Cancel", command=self._close_camera_setup_window).pack(side="left", padx=5)
@@ -405,52 +397,31 @@ class App:
             command=self._launch_ribbon_cam_preview,
         ).pack(side="left", padx=(25, 0))
 
-        # Picture mode: how the camera images are combined. Applies from the next capture on, saved immediately (no "Save Order" needed).
-        mode_frame = ttk.Frame(self._camera_setup_window)
-        mode_frame.pack(anchor="w", padx=15, pady=(0, 10))
-        ttk.Label(mode_frame, text="Picture mode:", font=("Arial", 10, "bold")).pack(side="left", padx=(0, 10))
-        self._panorama_mode_var = tk.StringVar(value=camera_setup.get_panorama_mode())
-        ttk.Radiobutton(
-            mode_frame, text="Stitch (panorama)", value="stitch",
-            variable=self._panorama_mode_var, command=self._on_panorama_mode_changed,
-        ).pack(side="left", padx=(0, 10))
-        ttk.Radiobutton(
-            mode_frame, text="Side by side", value="side_by_side",
-            variable=self._panorama_mode_var, command=self._on_panorama_mode_changed,
-        ).pack(side="left")
-
         self._camera_setup_status_var = tk.StringVar(value="")
         ttk.Label(
             self._camera_setup_window, textvariable=self._camera_setup_status_var, font=("Arial", 10, "italic")
         ).pack(anchor="w", padx=15, pady=(0, 10))
 
         self._camera_setup_slots_frame = ttk.Frame(self._camera_setup_window)
-        self._camera_setup_slots_frame.pack(anchor="w", padx=15, pady=(0, 15))
+        self._camera_setup_slots_frame.pack(anchor="w", padx=15, pady=(0, 10))
+
+        # Overlap per seam: filled by _render_camera_setup_slots, since it depends on the number of cameras
+        self._camera_setup_seams_frame = ttk.Frame(self._camera_setup_window)
+        self._camera_setup_seams_frame.pack(anchor="w", padx=15, pady=(0, 10))
+
+        # The combined picture exactly as it will be saved, updated live
+        self._combined_preview_label = ttk.Label(self._camera_setup_window, text="")
+        self._combined_preview_label.pack(anchor="w", padx=15, pady=(0, 15))
 
         self._camera_setup_window.protocol("WM_DELETE_WINDOW", self._close_camera_setup_window)
 
         if self._camera_discovery_running:
-            # A search started from a previously closed window is still
-            # running - its result will simply show up in this window
+            # A search started from a previously closed window is still running.
+            # Its result will simply show up in this window
             self._camera_setup_status_var.set("Searching for cameras ...")
             self._update_camera_setup_buttons()
         else:
             self._start_camera_discovery()
-
-    def _on_panorama_mode_changed(self) -> None:
-        """Radio button clicked -> save the new picture mode right away."""
-        mode = self._panorama_mode_var.get()
-        try:
-            camera_setup.set_panorama_mode(mode)
-        except (ValueError, OSError) as exc:
-            # Not saved -> show the mode that's actually active again
-            self._panorama_mode_var.set(camera_setup.get_panorama_mode())
-            self.log_event(f"Picture mode could not be changed: {exc}", level=logging.ERROR)
-            messagebox.showerror("Camera Setup", f"Picture mode could not be saved:\n\n{exc}", parent=self._camera_setup_window)
-            return
-
-        mode_text = "stitch (panorama)" if mode == "stitch" else "side by side"
-        self.log_event(f"Picture mode changed to: {mode_text}")
 
     def _close_camera_setup_window(self) -> None:
         if self._camera_preview_after_id is not None:
@@ -462,8 +433,11 @@ class App:
         self._camera_setup_window = None
         self._camera_setup_slots_frame = None
         self._camera_setup_status_var = None
-        self._panorama_mode_var = None
         self._camera_setup_save_button = None
+        self._camera_setup_seams_frame = None
+        self._combined_preview_label = None
+        self._combined_preview_photo = None
+        self._overlap_vars = []
         self.tray_table.focus_set()
 
     def _update_camera_setup_buttons(self) -> None:
@@ -488,9 +462,8 @@ class App:
         threading.Thread(target=self._camera_discovery_worker, daemon=True).start()
 
     def _camera_discovery_worker(self) -> None:
-        """Runs in a background thread. ALWAYS reports back to the Tk
-        main thread - otherwise _camera_discovery_running would stay True
-        and the Save button disabled forever."""
+        """Runs in a background thread. ALWAYS reports back to the Tk main thread, otherwise
+        _camera_discovery_running would stay True and the Save button disabled forever."""
         found: dict = {}
         error_message = None
         try:
@@ -504,7 +477,7 @@ class App:
     def _on_camera_discovery_done(self, found: dict, error_message: Optional[str]) -> None:
         self._camera_discovery_running = False
 
-        # Window may have been closed while searching - just drop the result
+        # Window may have been closed while searching: then just drop the result
         if self._camera_setup_window is None or not self._camera_setup_window.winfo_exists():
             return
 
@@ -517,13 +490,12 @@ class App:
         new = [device for device in found if device not in kept]
         self._camera_setup_order = kept + new
 
-        # The frames from the discovery's functional test ARE the previews -
-        # no second capture round needed
+        # The frames from the discovery ARE the previews, no second capture round needed
         self._camera_setup_photos = {device: self._frame_to_photo(frame) for device, frame in found.items()}
         self._render_camera_setup_slots()
 
         if found:
-            self._camera_setup_status_var.set(f"{len(found)} camera(s) found - pictures update live.")
+            self._camera_setup_status_var.set(f"{len(found)} camera(s) found. Pictures update live.")
             self.clear_error("usb_cameras")   # e.g. camera plugged in after startup
             self._schedule_camera_preview_refresh(config.CAMERA_SETUP_PREVIEW_REFRESH_MS)
         else:
@@ -550,20 +522,42 @@ class App:
 
         self._camera_preview_fetch_running = True
         devices = list(self._camera_setup_order)
-        threading.Thread(target=self._camera_preview_worker, args=(devices,), daemon=True).start()
+        overlaps = self._current_overlaps()
+        threading.Thread(
+            target=self._camera_preview_worker, args=(devices, overlaps), daemon=True
+        ).start()
 
-    def _camera_preview_worker(self, devices: list[str]) -> None:
+    def _camera_preview_worker(self, devices: list[str], overlaps: list[int]) -> None:
+        """Background thread: newest frame per camera + the combined picture with the CURRENT (unsaved) values."""
         frames: dict = {}
+        combined = None
+        combined_error = None
         try:
             frames = camera_setup.get_preview_frames(devices)
+            if devices and all(device in frames for device in devices):
+                combined = camera_setup.crop_and_combine(
+                    [frames[device] for device in devices], overlaps, show_seams=True
+                )
+            else:
+                combined_error = "Combined picture: waiting for all cameras ..."
+        except ValueError as exc:
+            combined_error = f"Combined picture not possible: {exc}"
         except Exception:
             logging.exception("Camera Setup live preview failed")
-        self.root.after(0, self._on_camera_previews_fetched, frames)
+        self.root.after(0, self._on_camera_previews_fetched, frames, combined, combined_error)
 
-    def _on_camera_previews_fetched(self, frames: dict) -> None:
+    def _on_camera_previews_fetched(self, frames: dict, combined=None, combined_error: Optional[str] = None) -> None:
         self._camera_preview_fetch_running = False
         if self._camera_setup_window is None or not self._camera_setup_window.winfo_exists():
             return
+
+        if self._combined_preview_label is not None:
+            if combined is not None:
+                self._combined_preview_photo = self._frame_to_photo(combined, max_size=(1250, 300))
+                self._combined_preview_label.configure(image=self._combined_preview_photo, text="")
+            elif combined_error:
+                self._combined_preview_photo = None
+                self._combined_preview_label.configure(image="", text=combined_error)
 
         for device, frame in frames.items():
             label = self._camera_setup_image_labels.get(device)
@@ -577,20 +571,48 @@ class App:
             self._schedule_camera_preview_refresh(config.CAMERA_SETUP_PREVIEW_REFRESH_MS)
 
     @staticmethod
-    def _frame_to_photo(frame) -> ImageTk.PhotoImage:
-        """cv2 frame (BGR) -> thumbnail for the setup slots. Must run in
-        the Tk main thread (PhotoImage isn't thread-safe)."""
+    def _frame_to_photo(frame, max_size: tuple[int, int] = (280, 210)) -> ImageTk.PhotoImage:
+        """cv2 frame (BGR) -> thumbnail. Must run in the Tk main thread (PhotoImage isn't thread-safe)."""
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         pil_image = Image.fromarray(rgb)
-        pil_image.thumbnail((280, 210))
+        pil_image.thumbnail(max_size)
         return ImageTk.PhotoImage(pil_image)
 
+    # --- Camera Setup: seam overlaps ------------------------------------------------
+
+    def _current_overlaps(self) -> list[int]:
+        """Overlap per seam as currently set in the window, exactly one value per seam."""
+        seam_count = max(len(self._camera_setup_order) - 1, 0)
+        return (self._seam_overlaps + [0] * seam_count)[:seam_count]
+
+    def _overlap_spinbox(self, parent, value: int, on_change: Callable[[int], None]) -> ttk.Spinbox:
+        """Number field with arrows (2 px steps). on_change gets the new value, also when typed in.
+        An invalid entry (empty, letters) is simply ignored until it's valid again."""
+        var = tk.IntVar(value=value)
+        self._overlap_vars.append(var)
+
+        def _changed(*_args) -> None:
+            try:
+                on_change(var.get())
+            except tk.TclError:
+                pass
+
+        var.trace_add("write", _changed)
+        return ttk.Spinbox(parent, from_=0, to=1200, increment=2, width=6, textvariable=var)
+
+    def _set_seam_overlap(self, index: int, value: int) -> None:
+        while len(self._seam_overlaps) <= index:
+            self._seam_overlaps.append(0)
+        self._seam_overlaps[index] = value
+
     def _render_camera_setup_slots(self) -> None:
-        """Rebuilds the row of camera slots from self._camera_setup_order -
-        called after any reorder, so the on-screen layout matches."""
-        for child in self._camera_setup_slots_frame.winfo_children():
-            child.destroy()
+        """Rebuilds the row of camera slots from self._camera_setup_order.
+        Called after any reorder, so the on-screen layout matches."""
+        for frame in (self._camera_setup_slots_frame, self._camera_setup_seams_frame):
+            for child in frame.winfo_children():
+                child.destroy()
         self._camera_setup_image_labels = {}
+        self._overlap_vars = []
 
         for index, device in enumerate(self._camera_setup_order):
             slot = ttk.Frame(self._camera_setup_slots_frame, relief="groove", borderwidth=1, padding=10)
@@ -626,6 +648,17 @@ class App:
             if index == len(self._camera_setup_order) - 1:
                 right_button.state(["disabled"])
 
+        # Overlap per seam (between two neighbouring positions)
+        overlaps = self._current_overlaps()
+        if overlaps:
+            ttk.Label(self._camera_setup_seams_frame, text="Overlap [px]:", font=("Arial", 10, "bold")).pack(side="left", padx=(0, 10))
+        for index, overlap in enumerate(overlaps):
+            ttk.Label(self._camera_setup_seams_frame, text=f"Seam {index + 1}|{index + 2}").pack(side="left", padx=(10, 5))
+            self._overlap_spinbox(
+                self._camera_setup_seams_frame, overlap,
+                lambda value, i=index: self._set_seam_overlap(i, value),
+            ).pack(side="left")
+
     def _move_camera_setup_slot(self, index: int, direction: int) -> None:
         new_index = index + direction
         if not (0 <= new_index < len(self._camera_setup_order)):
@@ -634,18 +667,25 @@ class App:
         order[index], order[new_index] = order[new_index], order[index]
         self._render_camera_setup_slots()
 
-    def _save_camera_setup_order(self) -> None:
-        # No need to update anything else - captures read the saved
-        # order fresh via camera_setup.get_camera_devices()
-        camera_setup.save_camera_order(self._camera_setup_order)
-        self.log_event("Camera order updated via Camera Setup")
+    def _save_camera_setup(self) -> None:
+        """Saves the camera order and the seam overlaps. Captures read both fresh, so they apply to the next photo."""
+        overlaps = self._current_overlaps()
+        try:
+            camera_setup.save_camera_order(self._camera_setup_order)
+            camera_setup.save_seam_overlaps(overlaps)
+        except OSError as exc:
+            self.log_event(f"Camera Setup could not be saved: {exc}", level=logging.ERROR)
+            messagebox.showerror("Camera Setup", f"Could not be saved:\n\n{exc}", parent=self._camera_setup_window)
+            return
+        self.log_event(f"Camera Setup saved, seam overlaps {overlaps} px")
+        self.clear_error("camera_order")
         self._close_camera_setup_window()
 
     def _launch_ribbon_cam_preview(self) -> None:
         """Starts setup_ribbon_cam.py as a separate process. The program's own ribbon cam stream is
         released for it (two programs can't use the camera at the same time) and restarted as soon
-        as the preview is closed - see _watch_ribbon_cam_preview."""
-        # Only one preview at a time - poll() is None means "still running"
+        as the preview is closed (see _watch_ribbon_cam_preview)."""
+        # Only one preview at a time. poll() is None means "still running"
         if self._ribbon_cam_process is not None and self._ribbon_cam_process.poll() is None:
             messagebox.showinfo(
                 "Camera Setup", "The ribbon cam preview is already open.", parent=self._camera_setup_window
@@ -662,7 +702,7 @@ class App:
         if not messagebox.askokcancel(
             "Camera Setup",
             "Opens in a separate window. Close it with 'q' or the X.\n\n"
-            "While the preview is open, NO automatic photos are taken - the preview needs the QR camera. "
+            "While the preview is open, NO automatic photos are taken, because the preview needs the QR camera. "
             "Automatic mode continues as soon as the preview is closed.",
             parent=self._camera_setup_window,
         ):
@@ -671,18 +711,18 @@ class App:
         if self.ribbon_cam_release:
             self.ribbon_cam_release()
         self._ribbon_cam_process = subprocess.Popen([sys.executable, str(script_path)])
-        self.log_event("Ribbon cam live preview opened - automatic photos paused", level=logging.WARNING)
-        self.set_error("ribbon_preview", "Ribbon cam live preview open - no automatic photos")
+        self.log_event("Ribbon cam live preview opened. Automatic photos paused", level=logging.WARNING)
+        self.set_error("ribbon_preview", "Ribbon cam live preview open. No automatic photos")
         self.root.after(500, self._watch_ribbon_cam_preview)
 
     def _watch_ribbon_cam_preview(self) -> None:
-        """Checks every 0.5 s whether the preview was closed - then the ribbon cam stream is restarted."""
+        """Checks every 0.5 s whether the preview was closed. Then the ribbon cam stream is restarted."""
         process = self._ribbon_cam_process
         if process is not None and process.poll() is None:
             self.root.after(500, self._watch_ribbon_cam_preview)
             return
         self._ribbon_cam_process = None
-        # Restarting the camera takes about a second - in the background, so the GUI doesn't freeze
+        # Restarting the camera takes about a second. Runs in the background, so the GUI doesn't freeze
         threading.Thread(target=self._ribbon_cam_restart_worker, daemon=True).start()
 
     def _ribbon_cam_restart_worker(self) -> None:
@@ -699,12 +739,35 @@ class App:
         self.clear_error("ribbon_preview")
         if error:
             self.log_event(error, level=logging.ERROR)
-            self.set_error("ribbon", "Ribbon cam (QR) not available - no automatic photos")
+            self.set_error("ribbon", "Ribbon cam (QR) not available. No automatic photos")
         else:
             self.clear_error("ribbon")
-            self.log_event("Ribbon cam live preview closed - automatic photos active again")
+            self.log_event("Ribbon cam live preview closed. Automatic photos active again")
 
-    # --- History (separate pop-up window) --------------------------------
+    # --- Popup helpers ------------------------------------------------------
+
+    def _new_popup(self, key: str) -> tk.Toplevel:
+        """Creates a popup window named "kardex", so the taskbar shows the Kardex icon for it too.
+        Tk doesn't allow two windows with the same name under the same parent, so every popup gets its
+        own invisible holder frame (never packed) as parent. The popup itself is a normal, independent window."""
+        holder = self._popup_holders.get(key)
+        if holder is None:
+            holder = tk.Frame(self.root, name=f"{key}_holder")
+            self._popup_holders[key] = holder
+        return tk.Toplevel(holder, name=POPUP_WINDOW_NAME, class_=POPUP_WINDOW_CLASS)
+
+    @staticmethod
+    def _bring_to_front(window: tk.Toplevel) -> None:
+        """Tries to bring a popup in front of everything: restore it, put it on top for a moment, then back to
+        normal (otherwise it would stay on top forever). Works on Windows; on the Pi (Wayland) the desktop
+        ignores it, because programs aren't allowed to bring their own windows to the front there."""
+        window.deiconify()
+        window.lift()
+        window.attributes("-topmost", True)
+        window.after(200, lambda: window.winfo_exists() and window.attributes("-topmost", False))
+        window.focus_force()
+
+    # --- History (popup window) ---------------------------------------------
 
     def _new_popup(self, key: str) -> tk.Toplevel:
         """Creates a popup window named "kardex", so the taskbar shows the Kardex icon for it too.
@@ -728,8 +791,8 @@ class App:
         window.focus_force()
 
     def _open_history_window(self) -> None:
-        # Already open -> close and open it again (same reason as Manual Capture - the content
-        # is rebuilt from the log entries anyway, so nothing gets lost)
+        # Already open -> close and open it again (same reason as Manual Capture). The content
+        # is rebuilt from the log entries anyway, so nothing gets lost
         if self._history_window is not None and self._history_window.winfo_exists():
             self._history_window.destroy()
 
@@ -741,7 +804,7 @@ class App:
 
         list_frame = ttk.Frame(self._history_window)
         list_frame.pack(padx=10, pady=10, fill="both", expand=True)
-        # Monospace font, so the timestamps line up - Consolas only exists on Windows
+        # Monospace font, so the timestamps line up. Consolas only exists on Windows
         mono_font = ("Consolas", 10) if sys.platform.startswith("win32") else ("DejaVu Sans Mono", 10)
         self._history_listbox = tk.Listbox(list_frame, font=mono_font)
         # Scrollbars: vertical for many entries, horizontal for entries that are still too long
@@ -789,9 +852,8 @@ class App:
 
         try:
             with open(log_file, "r", encoding="utf-8") as f:
-                # deque with maxlen only ever keeps the last max_lines
-                # lines while reading line by line - the rest of the
-                # (up to 5 MB) log file is never held in memory at once
+                # deque with maxlen only ever keeps the last max_lines lines while reading line by line,
+                # so the (up to 5 MB) log file is never held in memory at once
                 last_lines = deque(f, maxlen=max_lines)
         except OSError:
             return
@@ -801,7 +863,7 @@ class App:
             if line:
                 self._log_entries.append(line)
 
-    # --- Section 2: Resizable split - table (top) / image preview (bottom) --
+    # --- Section 2: resizable split, table (top) / image preview (bottom) ---
 
     def _build_main_section(self) -> None:
         paned = ttk.Panedwindow(self.root, orient=tk.VERTICAL)
@@ -907,8 +969,8 @@ class App:
             if row_id in self.tray_table.selection():
                 self._load_preview_image(tray_number)
             return
-        # Tray not in the table right now (filtered out by the search) -
-        # nothing to do, it shows the new date once the search changes
+        # Tray not in the table right now (filtered out by the search): nothing to do,
+        # it shows the new date once the search changes
 
     # --- Rename with right mouse button ----------------------------------------
 
@@ -927,7 +989,7 @@ class App:
             self._row_menu.tk_popup(event.x_root, event.y_root)
         finally:
             # Only on Windows: there tk_popup works differently and the grab must be released.
-            # On Linux the grab is what closes the menu on a click elsewhere - releasing it
+            # On Linux the grab is what closes the menu on a click elsewhere, so releasing it
             # would keep the menu open.
             if sys.platform.startswith("win32"):
                 self._row_menu.grab_release()
@@ -936,14 +998,13 @@ class App:
         """Called by the context menu's "Rename" entry."""
         row_id = self._menu_row_id
         self._menu_row_id = None
-        # The table may have been rebuilt in the meantime (e.g. by the search) - then the row is gone
+        # The table may have been rebuilt in the meantime (e.g. by the search), then the row is gone
         if row_id is not None and self.tray_table.exists(row_id):
             self._rename_row(row_id)
 
-
     def _rename_row(self, row_id: str) -> None:
         """Prompts for a new description, confirms with the user, then
-        writes it to Inventory.txt and updates the table in place."""
+        writes it to the inventory file and updates the table in place."""
 
         tray_number_str, current_description, last_opened = self.tray_table.item(row_id, "values")
 
@@ -1009,18 +1070,14 @@ class App:
         self._preview_canvas.bind("<B1-Motion>", self._handle_lens_motion)
         self._preview_canvas.bind("<ButtonRelease-1>", self._handle_lens_release)
 
-        # Circle mask for the magnifier - built once, reused for every redraw
+        # Circle mask for the magnifier: built once, reused for every redraw
         self._lens_mask = Image.new("L", (config.LENS_SIZE, config.LENS_SIZE), 0)
         ImageDraw.Draw(self._lens_mask).ellipse((0, 0, config.LENS_SIZE - 1, config.LENS_SIZE - 1), fill=255)
 
     def _handle_global_arrow_key(self, event) -> Optional[str]:
-        """Lets Up/Down move the table selection even when focus is
-        elsewhere (e.g. the search box) - the table itself already
-        handles Up/Down natively when it has focus, so this only takes
-        over when some OTHER widget in the main window has focus.
-        Popup windows (History, Manual Capture, Camera Setup) are
-        excluded, so their own keyboard handling isn't hijacked.
-        """
+        """Lets Up/Down move the table selection even when the focus is elsewhere (e.g. the search box).
+        The table itself already handles Up/Down when it has focus, so this only takes over when some OTHER
+        widget in the main window has focus. Popup windows are excluded, so their keyboard handling isn't hijacked."""
         focused = self.root.focus_get()
         if focused is None:
             return None
@@ -1047,7 +1104,7 @@ class App:
         return "break"
 
     def _handle_tray_selected(self, event=None) -> None:
-        # Debounce: while scrolling fast through the table with the arrow keys held down, don't decode/load a JPEG for every single intermediate row
+        # Debounce: while scrolling fast with the arrow keys held down, don't load a JPEG for every single row passed
         if self._preview_after_id is not None:
             self.root.after_cancel(self._preview_after_id)
 
@@ -1073,18 +1130,18 @@ class App:
 
         if image_path is None:
             self._set_preview_image(None)
-            self._preview_info_var.set(f"Tray {tray_number} - no captured image yet.")
+            self._preview_info_var.set(f"Tray {tray_number}: no captured image yet.")
             return
 
         try:
-            # "with" closes the file again afterwards - convert() creates a fully loaded copy.
+            # "with" closes the file again afterwards, convert() creates a fully loaded copy.
             # The FULL resolution is kept (no draft/thumbnail anymore): the preview is scaled
             # from it to fit the pane, and the magnifier needs the original details.
             with Image.open(image_path) as pil_image:
                 full_image = pil_image.convert("RGB")
         except Exception as exc:
             self._set_preview_image(None)
-            self._preview_info_var.set(f"Tray {tray_number} - could not load image ({exc}).")
+            self._preview_info_var.set(f"Tray {tray_number}: could not load image ({exc}).")
             return
 
         self._set_preview_image(full_image)
@@ -1097,8 +1154,8 @@ class App:
         self._render_preview()
 
     def _handle_preview_resize(self, event=None) -> None:
-        # Debounce: while the window or the divider is being dragged, <Configure> fires constantly -
-        # only rescale once it has stopped for a moment
+        # Debounce: while the window or the divider is being dragged, <Configure> fires constantly.
+        # Only rescale once it has stopped for a moment
         if self._preview_resize_after_id is not None:
             self.root.after_cancel(self._preview_resize_after_id)
         self._preview_resize_after_id = self.root.after(config.PREVIEW_DEBOUNCE_MS, self._render_preview)
@@ -1116,7 +1173,7 @@ class App:
 
         canvas_w, canvas_h = canvas.winfo_width(), canvas.winfo_height()
         if canvas_w < 10 or canvas_h < 10:
-            return  # canvas not laid out yet - <Configure> calls this again once it is
+            return  # canvas not laid out yet, <Configure> calls this again once it is
 
         img_w, img_h = self._preview_full.size
         scale = min(canvas_w / img_w, canvas_h / img_h, 1.0)
@@ -1201,15 +1258,14 @@ class App:
                            outline="#333333", width=2, tags="lens")
 
     def _format_capture_info(self, tray_number: int, image_path: Path) -> str:
-        """Builds a human-readable "Tray N - taken on DD-MM-YYYY at
-        HH:MM:SS" string from the timestamp encoded in the filename."""
+        """Builds "Tray N: taken on DD.MM.YYYY at HH:MM:SS" from the timestamp in the filename."""
         timestamp = self._capture_timestamp(image_path)
         if timestamp is not None:
-            formatted = timestamp.strftime("%d-%m-%Y at %H:%M:%S")
+            formatted = timestamp.strftime("%d.%m.%Y at %H:%M:%S")
         else:
             formatted = image_path.stem.replace("finalFrame_", "")
 
-        return f"Tray {tray_number} - taken on {formatted}"
+        return f"Tray {tray_number}: taken on {formatted}"
 
     def _load_button_icons(self) -> None:
         icons_dir = Path(__file__).resolve().parent / "icons"
@@ -1218,7 +1274,6 @@ class App:
             path = icons_dir / f"{name}.png"
             if path.exists():
                 self._button_icons[name] = ImageTk.PhotoImage(Image.open(path))
-
 
 
 if __name__ == "__main__":

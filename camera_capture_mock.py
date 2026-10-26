@@ -1,7 +1,7 @@
 """
-Mock camera_stitching for Windows testing.
+Mock camera_capture for Windows testing.
 Only grabbing the frames is replaced (webcam at index 0/1, or a placeholder image) -
-combining and saving is the real code from camera_stitching.py, so both behave the same.
+combining and saving is the real code from camera_capture.py, so both behave the same.
 """
 
 from datetime import datetime
@@ -10,9 +10,14 @@ import time
 import cv2
 import numpy as np
 
-from camera_stitching import (   # noqa: F401 - re-exported, main.py uses them via this module
-    FrameSet, StitchResult, combine_and_save, create_tray_folders,
+from camera_capture import (   # noqa: F401 - re-exported, main.py uses them via this module
+    CaptureResult, FrameSet, combine_and_save, create_tray_folders,
 )
+
+# Everything main.py uses from this module
+__all__ = ["CaptureResult", "FrameSet", "combine_and_save", "create_tray_folders",
+           "grab_frames", "capture_and_save"]
+
 
 MOCK_CAMERA_INDICES = [0, 1]
 
@@ -46,8 +51,8 @@ def grab_frames(camera_devices) -> tuple[FrameSet | None, str | None]:
     return FrameSet(frames=frames, taken_at=time.monotonic(), taken_wall=datetime.now()), None
 
 
-def capture_and_stitch(camera_devices, tray_number: str) -> StitchResult:
+def capture_and_save(camera_devices, tray_number: str) -> CaptureResult:
     frame_set, error = grab_frames(camera_devices)
     if frame_set is None:
-        return StitchResult(success=False, error_message=error)
+        return CaptureResult(success=False, error_message=error)
     return combine_and_save(frame_set, tray_number)

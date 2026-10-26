@@ -1,5 +1,6 @@
 """
-Reads and writes the plain-text inventory list (Inventory.txt). One line per tray, in order -> line 1 corresponds to tray number config.TRAY_LOWER_LIMIT, line 2 to the next tray number.
+Reads and writes the plain-text inventory list (inventory.txt). One line per tray, in order -> line 1 corresponds to tray number config.TRAY_LOWER_LIMIT, line 2 to the next tray number.
+Also checks tray numbers coming from outside and normalize them.
 """
  
 from __future__ import annotations
@@ -11,7 +12,7 @@ import config
 
 
 def read_all() -> list[str]:
-    """Reads all inventory lines, in tray order"""
+    """Reads all inventory lines, in tray order."""
     try:
         with open(config.INVENTORY_FILE, "r", encoding="utf-8") as f:
             return [line.rstrip("\n") for line in f]
@@ -21,8 +22,7 @@ def read_all() -> list[str]:
  
  
 def search(query: str) -> list[tuple[int, str]]:
-    """Returns (tray_number, description) pairs whose description contains the query (case-insensitive substring match).
-    Returns an empty list for a blank query, rather than matching everything."""
+    """Returns (tray_number, description) pairs whose description contains the query .Returns an empty list for a blank query, rather than matching everything."""
     query = query.strip().lower()
     if not query:
         return []
@@ -36,9 +36,7 @@ def search(query: str) -> list[tuple[int, str]]:
  
 def write_all(lines: list[str]) -> None:
     """Overwrites the whole inventory file with the given lines, in tray order. Used e.g. when a description gets edited via the GUI.
-
-    Crash-safe: writes into a temporary file first and only then swaps it in place of the real file with os.replace().
-    """
+    Crash-safe: writes into a temporary file first and only then swaps it in place of the real file with os.replace(). """
     target = config.INVENTORY_FILE
     temp = target.with_name(target.name + ".tmp")
 
@@ -51,8 +49,7 @@ def write_all(lines: list[str]) -> None:
 
         os.replace(temp, target)
     except BaseException:
-        # something went wrong - the original file is untouched, just
-        # clean up the leftover temp file and pass the error on
+        # if something went wrong, the original file stayed untouched
         temp.unlink(missing_ok=True)
         raise
  
@@ -72,9 +69,9 @@ def update_description(tray_number: int, new_description: str) -> None:
 def normalize_tray_number(raw: str) -> str | None:
     """Checks a tray number coming from outside and returns it in normalized form, or None if it's invalid.
 
-    Accepted: plain digits only (surrounding whitespace is ignored), within TRAY_LOWER_LIMIT..TRAY_UPPER_LIMIT.
-    Normalized: leading zeros are removed ("01" -> "1").
-    Rejected: letters, signs ("+5", "-3"), decimals ("1.0"), empty input, and anything out of range.
+    - Accepted: plain digits only (surrounding whitespace is ignored), within TRAY_LOWER_LIMIT..TRAY_UPPER_LIMIT.
+    - Normalized: leading zeros are removed ("01" -> "1").
+    - Rejected: letters, signs ("+5", "-3"), decimals ("1.0"), empty input, and anything out of range.
     """
     text = raw.strip()
 

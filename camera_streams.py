@@ -1,22 +1,18 @@
 """
 Keeps every USB camera open permanently and continuously pulls frames in the background.
 
-Why: opening a camera (driver init, format negotiation) plus letting exposure settle takes
-several seconds. Done at the moment the door opens, the tray was already gone by the time the
-picture was taken. Here every camera is opened ONCE (program start / Camera Setup) and a
-background thread per camera keeps grabbing frames. Taking a photo is then only "decode the
-newest frame" - a few milliseconds, and exposure is always already settled.
+Why: opening a camera and letting the exposure settle takes several seconds and could be too slow when the door opens.
+So every camera is opened ONCE, and a photo only decodes the newest frame.
 
-grab() only fetches the raw frame from the driver (cheap, no decoding), retrieve() decodes it.
-So the background threads cost little CPU - only the frames that are actually used get decoded.
-
-If a camera stops delivering (unplugged, USB error), its thread closes it and keeps trying to
-reopen it every USB_CAMERA_RECONNECT_S. A frame older than USB_CAMERA_MAX_FRAME_AGE_S is never
-handed out, so a stuck camera can never produce an outdated photo.
+grab() only fetches the raw frame from the driver (cheap), retrieve() decodes it (only for frames that are used).
+On every (re)open, the fixed settings from USB_CAMERA_CONTROLS are applied. Frames are turned if ROTATE_IMAGE_180.
+A lost camera is reopened every USB_CAMERA_RECONNECT_S. A frame older than USB_CAMERA_MAX_FRAME_AGE_S is never used.
 """
 
 from __future__ import annotations
 
+import subprocess
+import sys
 import logging
 import threading
 import time
@@ -26,14 +22,34 @@ import cv2
 
 import config
 
+def apply_controls(device: str) -> None:
+    """Sets USB_CAMERA_CONTROLS via v4l2-ctl - one call per control, in dict order
+    (the C920 rejects focus_absolute while autofocus is still on)."""
+    if not sys.platform.startswith("linux"):
+        return   # Windows dev: no v4l2-ctl
+    for name, value in config.USB_CAMERA_CONTROLS.items():
+        try:
+            result = subprocess.run(
+                ["v4l2-ctl", "-d", device, "-c", f"{name}={value}"],
+                capture_output=True, text=True, timeout=2,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            logging.warning("Camera control %s=%s could not be set (%s): %s", name, value, exc, device)
+            continue
+        if result.returncode != 0:
+            logging.warning("Camera control %s=%s failed (%s): %s", name, value, result.stderr.strip(), device)
+
 
 def open_camera(device: str) -> cv2.VideoCapture:
+    """Opens one USB Cam with format, resolution, fps and the fixed controls """
     cam = cv2.VideoCapture(device, config.CAP_BACKEND)
     cam.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*config.USB_CAMERA_FOURCC))
     cam.set(cv2.CAP_PROP_FRAME_WIDTH, config.USB_CAMERA_RESOLUTION[0])
     cam.set(cv2.CAP_PROP_FRAME_HEIGHT, config.USB_CAMERA_RESOLUTION[1])
     if config.USB_CAMERA_FPS:
         cam.set(cv2.CAP_PROP_FPS, config.USB_CAMERA_FPS)
+    if cam.isOpened():
+        apply_controls(device)
     return cam
 
 
@@ -58,7 +74,13 @@ class CameraStream:
         was_connected = False
         while self._running:
             if self._cam is None:
-                cam = open_camera(self.device)
+                try:
+                    cam = open_camera(self.device)
+                except Exception:
+                    logging.exception("USB camera could not be opened: %s", self.device)
+                    self._sleep(config.USB_CAMERA_RECONNECT_S)
+                    continue
+
                 if not cam.isOpened():
                     cam.release()
                     self._sleep(config.USB_CAMERA_RECONNECT_S)
@@ -117,6 +139,8 @@ class CameraStream:
 
         if not ok or frame is None:
             return None, f"Camera frame could not be decoded: {self.device}"
+        if config.ROTATE_IMAGE_180:
+            frame = cv2.rotate(frame, cv2.ROTATE_180)
         return frame, None
 
 
@@ -147,6 +171,7 @@ def ensure(devices: list[str]) -> None:
 
 
 def stop_all() -> None:
+    """Stops all streams (program end)."""
     with _streams_lock:
         for stream in _streams.values():
             stream.stop()
@@ -154,8 +179,7 @@ def stop_all() -> None:
 
 
 def get_frame(device: str, wait_s: float = 0.0) -> tuple["cv2.typing.MatLike | None", str | None]:
-    """Newest frame of one camera. With wait_s > 0, waits that long for a first fresh frame
-    (only needed right after a stream was started - a running stream answers immediately)."""
+    """Newest frame of one camera. With wait_s > 0, waits that long for a first fresh frame"""
     with _streams_lock:
         stream = _streams.get(device)
     if stream is None:

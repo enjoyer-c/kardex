@@ -95,7 +95,7 @@ class FlowControl:
         camera_warning = camera_setup.check_saved_order()
         if camera_warning:
             self.app.log_event(camera_warning, level=logging.WARNING)
-            self.app.set_error("USB camera order changed. Photos may be in the wrong order, please check Camera Setup")
+            self.app.set_error("camera_order", "USB camera order changed. Photos may be in the wrong order, please check Camera Setup")
 
         self.app.on_manual_capture = self._handle_manual_capture_request
 

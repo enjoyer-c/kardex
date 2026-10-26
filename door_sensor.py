@@ -1,6 +1,7 @@
 """
-Door sensor module (Door open/close)
-Calls the optional on_change callback with a bool (True = open) on every state change.
+Door sensor (reed contact on DOOR_SENSOR_GPIO).
+Calls the optional on_change callback with a bool (True = open) on every state change and once at startup with the current state.
+Which contact state means "open" is set by DOOR_SENSOR_INVERTED in config.py.
 """
 
 from typing import Callable, Optional
@@ -20,12 +21,12 @@ class DoorSensor:
         self._on_change = on_change
         self._is_open = False
 
-        # None = sensor set up fine. Otherwise holds a readable error
         self.error_message: Optional[str] = None
  
         if not IS_RPI:
             self.error_message = (
-                "Door sensor NOT available - gpiozero is not installed. "
+                "Door sensor NOT available!"
+                "gpiozero is not installed. "
                 "Door detection is disabled!"
             )
             return
@@ -38,7 +39,7 @@ class DoorSensor:
             )
         except Exception as exc:
             self.error_message = (
-                f"Door sensor NOT available - GPIO {config.DOOR_SENSOR_GPIO} "
+                f"Door sensor NOT available. GPIO {config.DOOR_SENSOR_GPIO} "
                 f"could not be set up ({exc}). Door detection is disabled!"
             )
             return
@@ -50,7 +51,7 @@ class DoorSensor:
 
     def _handle_change(self) -> None:
         contact_closed = self._button.is_pressed
-        # DOOR_SENSOR_INVERTED flips the meaning of the contact (see config.py)
+        # DOOR_SENSOR_INVERTED flips the meaning of the contact
         self._is_open = contact_closed if config.DOOR_SENSOR_INVERTED else not contact_closed
  
         if self._on_change:
@@ -58,7 +59,6 @@ class DoorSensor:
 
     def is_open(self) -> bool:
         return self._is_open
-
 
 
     # --- TEMP door test ---

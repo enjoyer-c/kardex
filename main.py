@@ -26,7 +26,7 @@ config.LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
-    # Milliseconds in every line - needed to measure the time between door signal and photo
+    # Milliseconds in every line is needed to measure the time between door signal and photo
     format="%(asctime)s.%(msecs)03d [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
@@ -36,12 +36,12 @@ logging.basicConfig(
         logging.StreamHandler(),
     ],
 )
-# picamera2 writes several lines ("Camera now open", "Camera started", ...) whenever the camera starts - only keep its warnings/errors
+# picamera2 logs several lines on every camera start, only keep its warnings/errors
 logging.getLogger("picamera2").setLevel(logging.WARNING)
 
 @dataclass
 class DoorCapture:
-    """Everything that happened after one door opening - collected in the background thread, evaluated in the Tk main thread."""
+    """Everything that happened after one door opening is collected in the background thread and evaluated in the Tk main thread."""
     photo_delay_s: float | None = None    # photos taken how long after the door signal
     photo_error: str | None = None        # USB cameras failed
     qr_duration_s: float = 0.0            # how long the QR check took after the door signal
@@ -53,43 +53,39 @@ class DoorCapture:
     crash: str | None = None              # unexpected exception
 
 
-class flow_controll:
-    """Reacts to the door sensor and GUI actions. The whole logic is ONE rule:
-
-    Door OPENS  -> immediately take the USB photos, then read the QR code (ribbon cam, runs permanently).
+class FlowControl:
+    """Reacts to the door sensor and GUI actions.
+    Door OPENS  -> take photos and ask the QR scanner (runs permanently) at the same time.
                    QR code found = save the photos under this tray number, no QR code = discard them.
     Door CLOSES -> nothing.
-
-    Nothing is remembered between two door events - every opening is complete on its own.
     """
 
     def __init__(self, app: gui.App):
         self.app = app
 
-        self._door_open: bool | None = None   # last known door state (None until the first sensor event)
-        self._capture_running = False         # door OR manual capture in progress
+        self._door_open: bool | None = None   # last known door state
+        self._capture_running = False         # door or manual capture in progress
 
         self.sensor = door_sensor.DoorSensor(
-            # The signal time is taken HERE, in the sensor thread - the log can then show how long it took until the photo
             on_change=lambda is_open: self.app.root.after(0, self._on_door_change, is_open, time.monotonic())
         )
 
-        # If the door sensor couldn't be set up, show it in the History; otherwise nobody notices that door detection isn't working.
+        # If the door sensor couldn't be set up, show it in the History
         sensor_error = getattr(self.sensor, "error_message", None)
         if sensor_error:
             self.app.log_event(sensor_error, level=logging.ERROR)
-            self.app.set_error("sensor", "Door sensor not available - no automatic photos")
+            self.app.set_error("sensor", "Door sensor not available. No automatic photos")
 
-        # Ribbon cam runs permanently from now on - a scan then only reads the newest frames
+        # Ribbon cam runs permanently
         ribbon_error = qr_code_scanner.start_stream()
         if ribbon_error:
             self.app.log_event(ribbon_error, level=logging.ERROR)
-            self.app.set_error("ribbon", "Ribbon cam (QR) not available - no automatic photos")
-        # The live preview in Camera Setup needs the camera for itself - the GUI releases / restarts it with these
+            self.app.set_error("ribbon", "Ribbon cam (QR) not available. No automatic photos")
+        # Allow the GUI to free up or restart the ribbon cam for the preview
         self.app.ribbon_cam_release = qr_code_scanner.stop_stream
         self.app.ribbon_cam_restart = qr_code_scanner.start_stream
 
-        # Any USB cameras connected at all?
+        # Are any USB cameras connected at all?
         camera_error = camera_setup.check_cameras_connected()
         if camera_error:
             self.app.log_event(camera_error, level=logging.ERROR)
@@ -99,11 +95,11 @@ class flow_controll:
         camera_warning = camera_setup.check_saved_order()
         if camera_warning:
             self.app.log_event(camera_warning, level=logging.WARNING)
-            self.app.set_error("camera_order", "USB camera order changed - photos may be in the wrong order, please check Camera Setup")
+            self.app.set_error("USB camera order changed. Photos may be in the wrong order, please check Camera Setup")
 
         self.app.on_manual_capture = self._handle_manual_capture_request
 
-        # TEMP door test - only the real sensor has simulate_toggle (on Windows the mock's Enter key does the same job)
+        # TEMP door test
         if config.DOOR_TEST_BUTTON and hasattr(self.sensor, "simulate_toggle"):
             self.app.on_simulate_door = self._simulate_door
 
@@ -112,13 +108,13 @@ class flow_controll:
     def _on_door_change(self, is_open: bool, signal_time: float) -> None:
         state_text = "OPENED" if is_open else "CLOSED"
 
-        # First event = the sensor reports its state at program start - not a real door movement
+        # First event = the sensor reports its state at program start, not a real door movement
         if self._door_open is None:
             self._door_open = is_open
             self.app.log_event(f"Door state at startup: {state_text}")
             return
 
-        # Same state as last time = no real change (e.g. a repeated sensor event)
+        # Same state as last time = no real change
         if is_open == self._door_open:
             return
         self._door_open = is_open
@@ -130,14 +126,14 @@ class flow_controll:
             return   # door closes -> nothing to do
 
         if self._capture_running:
-            self.app.log_event("Previous capture still running - this door opening is ignored", level=logging.WARNING)
+            self.app.log_event("Previous capture still running. This door opening is ignored", level=logging.WARNING)
             return
         self._capture_running = True
         threading.Thread(target=self._door_capture_worker, args=(signal_time,), daemon=True).start()
 
     def _door_capture_worker(self, signal_time: float) -> None:
         """Background thread: photos and QR check at the same time (the tray starts moving ~2.5 s after the door opens),
-        then save or discard. ALWAYS reports back to the Tk main thread - otherwise _capture_running would stay True forever."""
+        then save or discard. Always reports back to the Tk main thread. Otherwise _capture_running would stay True forever."""
         outcome = DoorCapture()
 
         def _qr_check() -> None:
@@ -147,9 +143,9 @@ class flow_controll:
                 if qr_result is not None:
                     outcome.qr_data = qr_result.data
                     outcome.qr_seen_s = qr_result.seen_at - signal_time
-                    # QR content comes from outside - only accept valid tray numbers, normalized ("01" -> "1")
+                    # QR content comes from outside and only accept valid tray numbers, normalized ("01" -> "1")
                     outcome.tray_number = inventory.normalize_tray_number(qr_result.data)
-            except RuntimeError as exc:          # camera not running (e.g. live preview open)
+            except RuntimeError as exc:          # camera not running
                 outcome.qr_error = str(exc)
             except Exception as exc:
                 logging.exception("QR scan crashed")
@@ -157,7 +153,7 @@ class flow_controll:
             outcome.qr_duration_s = time.monotonic() - signal_time
 
         try:
-            # 1. QR code (in the background) + USB photos - both right now, independent of each other
+            # 1. QR check and USB photos run in parallel
             qr_thread = threading.Thread(target=_qr_check, daemon=True)
             qr_thread.start()
             frame_set, outcome.photo_error = camera_capture.grab_frames(camera_setup.get_camera_devices())
@@ -165,7 +161,7 @@ class flow_controll:
                 outcome.photo_delay_s = frame_set.taken_at - signal_time
             qr_thread.join()
 
-            # 2. Save - only with photos AND a valid tray number, otherwise the photos are simply discarded
+            # 2. Save only if both worked
             if frame_set is not None and outcome.tray_number is not None:
                 outcome.result = camera_capture.combine_and_save(frame_set, outcome.tray_number)
         except Exception as exc:
@@ -180,7 +176,7 @@ class flow_controll:
 
         if outcome.crash:
             log(f"Capture CRASHED: {outcome.crash}", level=logging.ERROR)
-            self.app.set_error("capture", "Last capture failed - see History")
+            self.app.set_error("capture", "Last capture failed (History)")
             return
 
         if outcome.photo_delay_s is not None:
@@ -188,10 +184,10 @@ class flow_controll:
         else:
             log(f"Photos FAILED: {outcome.photo_error}", level=logging.ERROR)
 
-        # Red banner while the ribbon cam fails - disappears with the next scan that works again
+        # Red banner while the ribbon cam fails. Disappears with the next scan that works again.
         if outcome.qr_error:
             log(f"QR scan FAILED: {outcome.qr_error} -> photos discarded", level=logging.ERROR)
-            self.app.set_error("ribbon_scan", "QR scan failed - see History")
+            self.app.set_error("ribbon_scan", "QR scan failed (History)")
             return
         self.app.clear_error("ribbon_scan")
 
@@ -204,8 +200,8 @@ class flow_controll:
         log(f"QR code: tray {outcome.tray_number} (seen {outcome.qr_seen_s:+.2f} s from the door signal)")
 
         if outcome.result is None:
-            # QR found, but no photos (USB cameras failed - already logged above)
-            self.app.set_error("capture", f"Last capture failed (tray {outcome.tray_number}) - see History")
+            # QR found, but no photos
+            self.app.set_error("capture", f"Last capture failed [tray {outcome.tray_number}] (History)")
             return
         self._report_saved(outcome.result, outcome.tray_number)
 
@@ -216,15 +212,15 @@ class flow_controll:
             self.app.log_event(f"Capture saved for tray {tray_number}: {result.image_path.name}")
             self.app.update_tray_row(int(tray_number))   # only this tray's row gets refreshed
         else:
-            self.app.set_error("capture", f"Last capture failed (tray {tray_number}) - see History")
+            self.app.set_error("capture", f"Last capture failed [tray {tray_number}] (History)")
             self.app.log_event(f"Capture FAILED for tray {tray_number}: {result.error_message}", level=logging.ERROR)
 
-    # --- Manual capture -------------------------------------------------------
+    # --- Manual capture ----------------------------------------------
 
     def _handle_manual_capture_request(self, tray_number: str) -> None:
         """Triggered from the GUI's manual-capture button. Allowed any time, except while another capture is running."""
         if self._capture_running:
-            self.app.log_event("Manual capture rejected - a capture is already running", level=logging.WARNING)
+            self.app.log_event("Manual capture rejected. A capture is already running.", level=logging.WARNING)
             return
 
         self.app.log_event(f"Manual capture started for tray {tray_number}")
@@ -243,7 +239,7 @@ class flow_controll:
         self._capture_running = False
         self._report_saved(result, tray_number)
 
-    # --- TEMP door test (remove together with config.DOOR_TEST_BUTTON) ---
+    # --- TEMP door test ---
     def _simulate_door(self) -> None:
         self.sensor.simulate_toggle()
         state_text = "OPEN" if self.sensor.is_open() else "CLOSED"
@@ -267,9 +263,8 @@ def _handle_callback_exception(exc, val, tb) -> None:
 
 
 def _single_instance_lock():
-    """Makes sure the program runs only ONCE. A second instance would fight over the cameras ("Device or resource busy")
-    and the door sensor. Returns the open lock file (keep it open until the end!), or None if another instance runs.
-    The lock is released by the system automatically when the program ends - also after a crash."""
+    """Makes sure the program runs only once. A second instance would fight over the cameras ("Device or resource busy")
+    and the door sensor. The lock is released by the system automatically when the program ends or crashs."""
     if not sys.platform.startswith("linux"):
         return True   # Windows dev: no check
     import fcntl
@@ -283,19 +278,19 @@ def _single_instance_lock():
 
 
 def main() -> None:
-    lock = _single_instance_lock()
+    lock = _single_instance_lock()    # the lock only holds while the file stays open
     if lock is None:
-        logging.warning("Program start cancelled - it's already running")
+        logging.warning("Program already running")
         from tkinter import messagebox
         root = tk.Tk(className="Kardex")
         root.withdraw()
-        messagebox.showinfo("Kardex", "Kardex is already running.\n\nPlease use the open window (taskbar).")
+        messagebox.showinfo("Kardex", "Kardex is already running.\n\nPlease use the open window.")
         root.destroy()
         return
 
     camera_capture.create_tray_folders()
 
-    # Open all USB cameras NOW and keep them streaming - a capture then only takes the newest frame
+    # Open all USB cameras now and keep them streaming. A capture then only takes the newest frame.
     camera_setup.start_camera_streams()
 
     _set_windows_app_id()
@@ -310,7 +305,7 @@ def main() -> None:
     app = gui.App(root)
     app.load_history_from_log_file(config.LOG_FILE)
     app.log_event("################ Program started ################")
-    flow_controll(app)
+    FlowControl(app)
     try:
         root.mainloop()
     finally:

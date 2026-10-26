@@ -14,6 +14,11 @@ from camera_capture import (   # noqa: F401 - re-exported, main.py uses them via
     CaptureResult, FrameSet, combine_and_save, create_tray_folders,
 )
 
+# Everything main.py uses from this module
+__all__ = ["CaptureResult", "FrameSet", "combine_and_save", "create_tray_folders",
+           "grab_frames", "capture_and_save"]
+
+
 MOCK_CAMERA_INDICES = [0, 1]
 
 

@@ -1,9 +1,9 @@
 """
 Builds the final tray picture from the USB cameras. The cameras themselves stay open permanently.
-Two steps, so the photos can be taken FIRST and saved only once it's clear which tray they belong to (QR code):
-    grab_frames()      - newest frame of every camera, all at the same moment (fast, ~0.1 s)
-    combine_and_save() - crop the overlaps, put the images side by side, save under the tray number
-capture_and_save() does both at once (manual capture, tray number is already known).
+Two steps, so the photos can be taken right away and saved only once it's clear which tray they belong to (QR code):
+    grab_frames()      -> newest frame of every camera, all at the same moment (fast, ~0.1 s)
+    combine_and_save() -> crop the overlaps, put the images side by side and save under the tray number
+capture_and_save() does both at once (manual capture).
 
 Combining - one overlap value per seam (= border between two neighbouring cameras):
     Half of the overlap is cut off the RIGHT of the left camera, the other half off the LEFT of the
@@ -13,7 +13,7 @@ Combining - one overlap value per seam (= border between two neighbouring camera
     [     |cut] [cut|    |cut] [cut|    |cut] [cut|     ]
           seam 1         seam 2         seam 3
 
-    The values are set in the Camera Setup window (saved in SETTINGS_FILE), defaults in config.py.
+The overlaps are set in the Camera Setup window (saved in SETTINGS_FILE), defaults in config.py.
 """
 
 from dataclasses import dataclass
@@ -32,10 +32,10 @@ import camera_streams
 
 @dataclass
 class CaptureResult:
+    """Result of one capture: saved image path on success, otherwise a readable error."""
     success: bool
     image_path: Path | None = None
     error_message: str | None = None
-    frames_taken_at: float | None = None   # time.monotonic() when the frames were taken (for the log)
 
 
 @dataclass
@@ -46,10 +46,10 @@ class FrameSet:
     taken_wall: datetime   # wall-clock time - goes into the file name
 
 
-# --- Overlap values (one per seam) -----------------------------------------------
+# --- Settings file (camera order + seam overlaps, set in Camera Setup) ------------
 
 def read_settings() -> dict:
-    """The whole settings file as a dict - empty if it doesn't exist (yet) or is broken."""
+    """The whole settings file as a dict"""
     try:
         with open(config.SETTINGS_FILE, "r", encoding="utf-8") as f:
             settings = json.load(f)
@@ -66,7 +66,7 @@ def write_settings(settings: dict) -> None:
 
 
 def load_seam_overlaps() -> list[int]:
-    """Overlap per seam - as saved in Camera Setup, otherwise the defaults from config.py.
+    """Overlap per seam. Use settings as saved in Camera Setup, otherwise the defaults from config.py.
     Read fresh on every capture, so a change in Camera Setup applies to the very next photo."""
     overlaps = read_settings().get("seam_overlap_px")
     if isinstance(overlaps, list) and all(isinstance(v, int) for v in overlaps):
@@ -84,7 +84,7 @@ def save_seam_overlaps(overlaps: list[int]) -> None:
 # --- Combining --------------------------------------------------------------------
 
 def crop_and_combine(frames: list, overlaps: list[int], show_seams: bool = False):
-    """Crops the overlaps and puts the frames side by side (see module docstring).
+    """Crops the overlaps and puts the frames side by side.
     Raises ValueError if the values don't fit the frames (wrong count, nothing left after cutting).
     show_seams draws a red line where two images meet - only for the Camera Setup preview, never in a saved photo."""
     if len(overlaps) != len(frames) - 1:
@@ -112,12 +112,12 @@ def crop_and_combine(frames: list, overlaps: list[int], show_seams: bool = False
 
 def combine(frames: list) -> "cv2.typing.MatLike":
     """The final picture with the saved overlaps. If they don't fit (e.g. a camera is missing),
-    the frames are put side by side UNCUT - better an uncut picture than none."""
+    the frames are put side by side UNCUT."""
     overlaps = load_seam_overlaps()
     try:
         return crop_and_combine(frames, overlaps)
     except ValueError as exc:
-        logging.warning("Seam overlaps don't fit (%s) - saved uncut, please check Camera Setup", exc)
+        logging.warning("Seam overlaps don't fit (%s). Saved uncut, please check Camera Setup", exc)
         return crop_and_combine(frames, [0] * (len(frames) - 1))
 
 
@@ -139,7 +139,7 @@ def enforce_max_images(output_dir: Path, max_images: int) -> None:
 
 
 def grab_frames(camera_devices: list[str]) -> tuple[FrameSet | None, str | None]:
-    """Takes the newest frame of every camera from the running streams, all at (almost) the same moment.
+    """Takes the newest frame of every camera from the running streams, all at the same moment.
     Returns (FrameSet, None) or (None, error text)."""
     if not camera_devices:
         return None, "No USB cameras configured - please run Camera Setup"
@@ -171,7 +171,7 @@ def grab_frames(camera_devices: list[str]) -> tuple[FrameSet | None, str | None]
 
 
 def combine_and_save(frame_set: FrameSet, tray_number: str) -> CaptureResult:
-    """Combines the frames (see combine) and saves them under the tray number."""
+    """Combines the frames and saves them under the tray number."""
     t_start = time.monotonic()
     output_dir = config.OUTPUT_DIR / tray_number
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -186,8 +186,8 @@ def combine_and_save(frame_set: FrameSet, tray_number: str) -> CaptureResult:
 
     enforce_max_images(output_dir, config.MAX_IMAGES_PER_TRAY)
     logging.info("  details: combining + saving took %.0f ms", (time.monotonic() - t_start) * 1000)
+    return CaptureResult(success=True, image_path=image_path)
 
-    return CaptureResult(success=True, image_path=image_path, frames_taken_at=frame_set.taken_at)
 
 
 def capture_and_save(camera_devices: list[str], tray_number: str) -> CaptureResult:

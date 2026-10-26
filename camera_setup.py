@@ -1,15 +1,21 @@
 """
-Camera setup helper: lets the user identify connected USB cameras via a live snapshot and assign left/right
+USB camera management for the main program and the Camera Setup window:
+- which cameras are connected (by-path) and in which left-to-right order they are used
+- starting / stopping the permanent camera streams
+- preview frames and startup checks for Camera Setup
+- loading / saving the camera order (settings file)
 """
 
 from pathlib import Path
-import json
 import sys
 import time
+
+import cv2
 
 import config
 import camera_capture
 import camera_streams
+
 # Re-exported, so the GUI can use them without importing camera_capture
 load_seam_overlaps = camera_capture.load_seam_overlaps
 save_seam_overlaps = camera_capture.save_seam_overlaps
@@ -17,7 +23,7 @@ crop_and_combine = camera_capture.crop_and_combine
 
 
 def _connected_camera_paths() -> list[str]:
-    """by-path device paths of all connected USB video devices (only video-index0, duplicates removed). Does NOT open any camera. 
+    """by-path device paths of all connected USB video devices (only video-index0, duplicates removed). Does not open any camera.
     Uses by-path (not by-id): identical camera models often report the same or an empty serial number, by-path is keyed to the physical USB port instead, so it stays unique even for identical camera models.
     """
     by_path_dir = Path("/dev/v4l/by-path")
@@ -38,10 +44,11 @@ def _connected_camera_paths() -> list[str]:
 
 
 def get_camera_devices() -> list[str]:
-    """The camera devices to capture with, in left-to-right order: the order saved via Camera Setup, or all connected cameras in by-path order as a fallback.
-    Read fresh on every call, so a newly saved order is used right away without any restart.
-    If a saved camera isn't connected any more (e.g. plugged into another USB port), the connected cameras are used
-    instead - a picture in possibly wrong order is better than no picture (check_saved_order warns about it at startup).
+    """The camera devices to capture with, in left-to-right order.
+
+    Normally the order saved in Camera Setup. If none is saved yet, or a saved camera is no longer connected, all connected cameras are used in USB port order instead.
+    A picture in possibly wrong order is better than no picture; check_saved_order() warns about it at startup.
+    Read fresh on every call, so a newly saved order applies right away.
     """
     saved = load_camera_order()
     if not saved:
@@ -54,8 +61,8 @@ def get_camera_devices() -> list[str]:
 
 
 def start_camera_streams() -> None:
-    """Program start: opens all connected USB cameras and keeps them streaming (see camera_streams.py).
-    Does nothing on systems without /dev/v4l/by-path (e.g. Windows)."""
+    """Program start: opens all connected USB cameras and keeps them streaming.
+    Does nothing on Windows."""
     camera_streams.sync(_connected_camera_paths())
 
 
@@ -64,11 +71,10 @@ def stop_camera_streams() -> None:
     camera_streams.stop_all()
 
 
-def discover_cameras(max_cameras: int = 4) -> dict[str, "cv2.typing.MatLike"]:
+def discover_cameras() -> dict[str, "cv2.typing.MatLike"]:
     """Returns {device path: preview frame} for all connected USB cameras that deliver frames, in discovery order.
 
-    Takes the frames from the permanently running streams - no camera is opened or closed here, so this
-    doesn't disturb a capture and is fast. Newly plugged-in cameras get a stream, unplugged ones lose theirs.
+    Takes the frames from the permanently running streams. Newly plugged-in cameras get a stream, unplugged ones lose theirs.
     Only waits (up to USB_CAMERA_FIRST_FRAME_TIMEOUT_S) for streams that were just started.
     """
     candidates = _connected_camera_paths()
@@ -86,8 +92,7 @@ def discover_cameras(max_cameras: int = 4) -> dict[str, "cv2.typing.MatLike"]:
             break
         time.sleep(0.1)
 
-    ordered = [device for device in candidates if device in found][:max_cameras]
-    return {device: found[device] for device in ordered}
+    return {device: found[device] for device in candidates if device in found}
 
 
 def get_preview_frames(devices: list[str]) -> dict[str, "cv2.typing.MatLike"]:
@@ -102,7 +107,7 @@ def get_preview_frames(devices: list[str]) -> dict[str, "cv2.typing.MatLike"]:
 
 def check_cameras_connected() -> str | None:
     """Startup check: is at least one USB camera connected? Returns an error text if not, otherwise None.
-    Only on Linux - on Windows the mock modules are used and /dev/v4l doesn't exist.
+    Only on Linux, because on Windows the mock modules are used.
     """
     if not sys.platform.startswith("linux"):
         return None
@@ -112,10 +117,10 @@ def check_cameras_connected() -> str | None:
 
 
 def check_saved_order() -> str | None:
-    """Compares the saved camera order (camera_order.json) with the cameras that are connected right now. 
+    """Compares the saved camera order (settings.json) with the cameras that are connected right now. 
     Returns a warning text if they don't match, or None if everything fits.
 
-    Only looks at the /dev/v4l/by-path entries. Does nothing on systems without /dev/v4l/by-path (e.g. Windows).
+    Only looks at the /dev/v4l/by-path entries. Does nothing on Windows.
     """
     if not Path("/dev/v4l/by-path").exists():
         return None
@@ -123,7 +128,7 @@ def check_saved_order() -> str | None:
     connected = _connected_camera_paths()
     saved = load_camera_order()
     if not saved:
-        return "No camera order saved yet - please run Camera Setup."
+        return "No camera order saved yet. Please run Camera Setup."
 
     missing = [d for d in saved if d not in connected]
     new = [d for d in connected if d not in saved]
@@ -135,13 +140,12 @@ def check_saved_order() -> str | None:
         parts.append("missing: " + ", ".join(short_name(d) for d in missing))
     if new:
         parts.append("new: " + ", ".join(short_name(d) for d in new))
-    fallback = " - until then the connected cameras are used in USB port order" if missing else ""
-    return "Camera order changed (" + "; ".join(parts) + ") - please check Camera Setup" + fallback + "."
+    fallback = " Until then the connected cameras are used in USB port order." if missing else ""
+    return "Camera order changed (" + "; ".join(parts) + "). Please check Camera Setup." + fallback
 
 
 def short_name(device: str) -> str:
-    """Shortens a by-path device path down to just the last, most distinguishing segment, for display purposes.
-    """
+    """Shortens a by-path device path down to just the last, most distinguishing segment, for display purposes."""
     name = Path(device).name
     return name.replace("-video-index0", "")
 

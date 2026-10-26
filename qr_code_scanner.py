@@ -1,19 +1,15 @@
 """
-Ribbon camera (Raspberry Pi HQ Camera) for QR code scanning.
+Ribbon camera for QR code scanning.
 
-The camera runs permanently AND is scanned permanently: a background thread reads every newest frame and looks for
-a QR code (see _scan_loop). So when the door opens, the answer is usually already there - scan_now() only has to look
+The camera runs permanently and is scanned permanently: a background thread reads every newest frame and looks for a QR code. 
+So when the door opens, the answer is usually already there - scan_now() only has to look
 at what the loop has seen around the door signal, it never starts the camera or waits for exposure.
 
-Two QR readers, one after another (see scan_frame) - each one fails on different pictures:
-    aruco   OpenCV's QRCodeDetectorAruco (OpenCV >= 4.7) - reads our labels on the reflective metal best
-    zbar    pyzbar - fallback, often reads the code first while the tray is arriving
-Which readers are active is written to the log when the stream starts (without aruco = OpenCV too old).
+Two QR readers, one after another:
+    aruco   OpenCV's QRCodeDetectorAruco (OpenCV >= 4.7) -> reads our labels on the reflective metal best
+    zbar    pyzbar -> fallback 
 
-Only the ribbon-cam live preview (Camera Setup) stops the stream for a while, because two programs can't use the
-camera at the same time - see stop_stream / start_stream.
-
-Note on colors: picamera2's "RGB888" format delivers the pixels in B, G, R order - i.e. exactly what OpenCV expects.
+Only the ribbon-cam live preview (Camera Setup) stops the stream for a while.
 """
 
 from dataclasses import dataclass
@@ -34,11 +30,11 @@ try:
 except (ImportError, ModuleNotFoundError):
     HAS_PICAMERA = False
 
+
 @dataclass
 class QRResult:
     data: str
-    qr_type: str
-    reader: str = "aruco"         # which reader found it (see scan_frame) - for the log
+    reader: str = "aruco"         # which reader found it (Log)
     points: list | None = None    # corners [(x, y), ...] in the frame, if the reader reports them (live preview outline)
     seen_at: float = 0.0          # time.monotonic() when the frame was taken
 
@@ -73,11 +69,9 @@ def reader_names() -> str:
 
 
 def scan_frame(frame) -> Optional[QRResult]:
-    """Looks for a QR code in a single frame (BGR array from picamera2). Returns the first QR code found, or None.
-    A reader that crashes is skipped - the next one still gets its chance."""
-    # COLOR_RGB2GRAY on a BGR frame weights blue a bit more than the "correct" BGR2GRAY - kept exactly as in the
-    # old v0.2 scanner, which read all labels with this conversion
-    gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+    """Looks for a QR code in a single frame. Returns the first QR code found, or None.
+    A reader that crashes is skipped."""
+    gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)       # RGB2GRAY on purpose (frames are BGR) (old Programm Version worked with it)
     for name, read in READERS:
         try:
             found = read(gray)
@@ -86,7 +80,7 @@ def scan_frame(frame) -> Optional[QRResult]:
             continue
         if found:
             data, points = found
-            return QRResult(data=data, qr_type="QRCODE", reader=name, points=points)
+            return QRResult(data=data, reader=name, points=points)
     return None
 
 
@@ -97,7 +91,7 @@ _start_stop_lock = threading.Lock()     # start_stream / stop_stream never at th
 _stop_event = threading.Event()
 _thread: threading.Thread | None = None
 
-# Shared between the scan loop and scan_now - always accessed with _cond held
+# Shared between the scan loop and scan_now
 _cond = threading.Condition()
 _last_frame_time = 0.0          # time.monotonic() when the newest scanned frame was taken
 _hits: list[QRResult] = []      # QR codes seen in the last seconds (oldest first)
@@ -105,8 +99,7 @@ _hits: list[QRResult] = []      # QR codes seen in the last seconds (oldest firs
 
 def ribbon_camera_num() -> int:
     """Index of the ribbon cam for Picamera2. libcamera also lists the USB webcams - Picamera2() alone could pick
-    one of them (e.g. when the ribbon cam isn't connected) and then block it for the USB photos.
-    Raises RuntimeError if no ribbon cam is connected."""
+    one of them and then block it for the USB photos. Raises RuntimeError if no ribbon cam is connected."""
     for info in Picamera2.global_camera_info():
         if "usb" not in str(info.get("Id", "")).lower():
             return info["Num"]
@@ -116,10 +109,8 @@ def ribbon_camera_num() -> int:
 def _open_camera() -> "Picamera2":
     picam = Picamera2(ribbon_camera_num())
     try:
-        # STILL configuration (like the old program), not video: libcamera then reads the full sensor and scales down
-        # with high-quality noise reduction. The video configuration picks a fast, lower-quality sensor mode -
-        # sharp enough for a person, but some QR codes became unreadable. The lower frame rate doesn't matter,
-        # one scan takes longer than one frame anyway.
+        # STILL configuration: better image processing (high-quality noise reductionlonger and exposure allowed). 
+        # With the video configuration some QR codes became unreadable.
         picam.configure(picam.create_still_configuration(
             main={"size": config.QR_CAPTURE_SIZE, "format": "RGB888"}
         ))
@@ -143,7 +134,7 @@ def _scan_loop() -> None:
     Never dies on an error: camera errors lead to a camera restart, everything else is logged and the loop continues."""
     global _picam, _last_frame_time
     errors_in_a_row = 0
-    visible: str | None = None      # QR content currently in view (for the "in view / out of view" log lines)
+    visible: str | None = None      # QR content currently in view
     last_seen = 0.0
 
     while not _stop_event.is_set():
@@ -179,8 +170,8 @@ def _scan_loop() -> None:
             if result is not None:
                 result.seen_at = taken
                 _hits.append(result)
-            # Only keep what scan_now could still ask for
-            while _hits and taken - _hits[0].seen_at > config.QR_SCAN_WINDOW_S + config.QR_RECENT_S + 5:
+            # Only keep what scan_now could still ask for (+5 s safety margin)
+            while _hits and taken - _hits[0].seen_at > config.QR_SCAN_WINDOW_S + config.QR_RECENT_S + 5:            
                 _hits.pop(0)
             _cond.notify_all()
 
@@ -205,7 +196,7 @@ def start_stream() -> Optional[str]:
     Does nothing if it's already running."""
     global _picam, _thread, _last_frame_time
     if not HAS_PICAMERA:
-        return "picamera2 is not installed - trays can't be detected"
+        return "picamera2 is not installed. Trays can't be detected"
     with _start_stop_lock:
         if _thread is not None and _thread.is_alive():
             return None
@@ -216,13 +207,13 @@ def start_stream() -> Optional[str]:
             return f"Ribbon cam could not be started: {exc}"
         with _cond:
             _hits.clear()
-            _last_frame_time = time.monotonic()   # fresh start - the watchdog in scan_now must not fire right away
+            _last_frame_time = time.monotonic()
         _stop_event.clear()
         _thread = threading.Thread(target=_scan_loop, name="qr-scan", daemon=True)
         _thread.start()
     logging.info("Ribbon cam stream started (QR readers: %s)", reader_names())
     if _aruco_detector is None:
-        logging.warning("OpenCV %s has no aruco QR reader (needs >= 4.7) - only zbar is used", cv2.__version__)
+        logging.warning("OpenCV %s has no aruco QR reader (needs >= 4.7). Only zbar is used", cv2.__version__)
     return None
 
 
@@ -252,9 +243,9 @@ def is_running() -> bool:
 def scan_now(signal_time: float | None = None, window_s: float = config.QR_SCAN_WINDOW_S) -> Optional[QRResult]:
     """Which QR code is in front of the camera at the door opening (signal_time = time.monotonic() of the door signal)?
 
-    Accepts a code seen from QR_RECENT_S BEFORE the signal (usually it's already there -> answer immediately)
-    up to window_s AFTER the signal. Waits until a frame from the end of that window was scanned, so the whole
-    window is really covered. Returns the first code seen in that window, or None.
+    Accepts a code seen from QR_RECENT_S BEFORE the signal up to window_s after the signal. 
+    Waits until a frame from the end of that window was scanned, so the whole window is really covered. 
+    Returns the first code seen in that window, or None.
     Raises RuntimeError if the ribbon cam isn't running."""
     if signal_time is None:
         signal_time = time.monotonic()

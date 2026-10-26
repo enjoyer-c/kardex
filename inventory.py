@@ -1,5 +1,6 @@
 """
-Reads and writes the plain-text inventory list (Inventory.txt). One line per tray, in order -> line 1 corresponds to tray number config.TRAY_LOWER_LIMIT, line 2 to the next tray number.
+Reads and writes the plain-text inventory list (inventory.txt). One line per tray, in order -> line 1 corresponds to tray number config.TRAY_LOWER_LIMIT, line 2 to the next tray number.
+Also checks tray numbers coming from outside and normalize them.
 """
  
 from __future__ import annotations
@@ -11,7 +12,7 @@ import config
 
 
 def read_all() -> list[str]:
-    """Reads all inventory lines, in tray order"""
+    """Reads all inventory lines, in tray order."""
     try:
         with open(config.INVENTORY_FILE, "r", encoding="utf-8") as f:
             return [line.rstrip("\n") for line in f]
@@ -48,7 +49,7 @@ def write_all(lines: list[str]) -> None:
 
         os.replace(temp, target)
     except BaseException:
-        # something went wrong - the original file is untouched, just clean up the leftover temp file and pass the error on
+        # if something went wrong, the original file stayed untouched
         temp.unlink(missing_ok=True)
         raise
  

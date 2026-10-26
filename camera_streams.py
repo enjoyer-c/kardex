@@ -1,7 +1,12 @@
 """
 Keeps every USB camera open permanently and continuously pulls frames in the background.
 
-grab() only fetches the raw frame from the driver, retrieve() decodes it.
+Why: opening a camera and letting the exposure settle takes several seconds and could be too slow when the door opens.
+So every camera is opened ONCE, and a photo only decodes the newest frame.
+
+grab() only fetches the raw frame from the driver (cheap), retrieve() decodes it (only for frames that are used).
+On every (re)open, the fixed settings from USB_CAMERA_CONTROLS are applied. Frames are turned if ROTATE_IMAGE_180.
+A lost camera is reopened every USB_CAMERA_RECONNECT_S. A frame older than USB_CAMERA_MAX_FRAME_AGE_S is never used.
 """
 
 from __future__ import annotations
@@ -36,6 +41,7 @@ def apply_controls(device: str) -> None:
 
 
 def open_camera(device: str) -> cv2.VideoCapture:
+    """Opens one USB Cam with format, resolution, fps and the fixed controls """
     cam = cv2.VideoCapture(device, config.CAP_BACKEND)
     cam.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*config.USB_CAMERA_FOURCC))
     cam.set(cv2.CAP_PROP_FRAME_WIDTH, config.USB_CAMERA_RESOLUTION[0])
@@ -68,7 +74,13 @@ class CameraStream:
         was_connected = False
         while self._running:
             if self._cam is None:
-                cam = open_camera(self.device)
+                try:
+                    cam = open_camera(self.device)
+                except Exception:
+                    logging.exception("USB camera could not be opened: %s", self.device)
+                    self._sleep(config.USB_CAMERA_RECONNECT_S)
+                    continue
+
                 if not cam.isOpened():
                     cam.release()
                     self._sleep(config.USB_CAMERA_RECONNECT_S)
@@ -159,6 +171,7 @@ def ensure(devices: list[str]) -> None:
 
 
 def stop_all() -> None:
+    """Stops all streams (program end)."""
     with _streams_lock:
         for stream in _streams.values():
             stream.stop()

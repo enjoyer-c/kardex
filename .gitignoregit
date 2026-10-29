@@ -1,0 +1,1 @@
+captures/  __pycache__/  *.pyc  rm -r --cached captures/git rm -r --cached __pycache__/git add .gitignoregit commit -m "Exkludiere captures und pycache"git push origin master

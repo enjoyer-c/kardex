@@ -50,7 +50,7 @@
 
 The Kardex Content Tracker is an add-on for the Kardex high-bay warehouse. The Kardex itself does not record what is stored in each tray. This system closes that gap. When a tray goes back in, the system identifies its tray number and automatically captures its contents. The saved images are displayed in a searchable list, so users can check what is in a tray without ordering it out.
 
-The system only observes: it reads a door sensor and cameras, but has no connection to the Kardex control and never influences its operation. One Raspberry Pi serves one Kardex unit.
+The system works independently of the Kardex: it only uses its own door sensor and cameras and has no connection to the Kardex control. One Raspberry Pi is installed per Kardex unit.
 
 This document is meant for developers who maintain or extend the system. It describes the workflow, the main design decisions and the setup. Usage of the GUI is covered in @sec-gui.
 
@@ -63,7 +63,7 @@ This document is meant for developers who maintain or extend the system. It desc
   align: left,
   table.header[*Component*][*Model*][*Purpose*],
   [Controller],  [Raspberry Pi 4 Model B Rev 1.5], [Runs software],
-  [Door sensor], [Reed contact (magnetic switch), GPIO 17], [Detects door movement],
+  [Door sensor], [Reed contact, GPIO 17], [Detects door movement],
   [QR scanner],  [Raspberry Pi HQ Camera, 16 mm lens], [Reads the tray number from the QR code],
   [USB cameras],     [4x Logitech C920 PRO HD, 1080p, 30 FPS], [Capture images of the tray contents],
   [USB hub],     [Powered USB hub], [Supplies power for the USB cameras],
@@ -79,7 +79,7 @@ This document is meant for developers who maintain or extend the system. It desc
     columns: (auto, 1fr),
     align: left,
     table.header[*File*][*Purpose*],
-    [`main.py`], [Flow control: when the door opens, the USB photos are taken and the QR scanner is asked at the same time, then the photos are saved under the tray number or discarded. Also runs the startup checks.],
+    [`main.py`], [Flow control: when the door opens, it takes photos with the USB cameras and the QR scanner is asked at the same time, then the photos are saved under the tray number or discarded. Also runs the startup checks.],
     [`gui.py`], [Tkinter interface: searchable tray table with image preview and magnifier, error banner, History, Manual Capture and the Camera Setup window.],
     [`config.py`], [All constants in one place (paths, GPIO pin, camera and QR settings, tray limits), platform-aware for Windows and Pi.],
     [`door_sensor.py`], [Reads the door sensor via GPIO and reports every change. If the GPIO can't be set up, the program still starts and shows an error (a disconnected cable can't be detected).],
@@ -188,7 +188,7 @@ door signal ────────▶ log "DOOR OPENED"
                       update banner
 ```
   ],
-  caption: [One door opening through the threads. Arrows = hand-over via `root.after()`.],
+    caption: [One door opening through the threads],
 ) <fig-threads>
 #pagebreak()
 == Reading the Log
@@ -254,7 +254,7 @@ The program has a single main window (@fig-main-gui). The upper part shows the c
     [2], [Live: Ribbon Cam \ button], [Opens a live view of the ribbon camera with QR detection, to align and focus it. While it is open, the program releases the ribbon cam, so no automatic photos are taken (red banner); the camera is taken over again when the view is closed.],
     [3], [Camera previews], [Live picture of every detected USB camera, updated every 0.5 s, so each camera can be identified by what it sees. The position number shows its place in the left-to-right order.],
     [4], [Arrow buttons], [Move a camera one position to the left or right until the order matches the physical arrangement.],
-    [5], [Overlap (px)], [One value per seam between two neighbouring cameras: how many pixels their pictures overlap. Half of it is cut off each neighbour. Increase it if something appears twice at a seam, decrease it if something is missing. Arrows change it in 2 px steps; a number can also be typed in.],
+    [5], [Overlap (px)], [One value per seam between two neighboring cameras: how many pixels their pictures overlap. Half of it is cut off each neighbor. Increase it if something appears twice at a seam, decrease it if something is missing. Arrows change it in 2 px steps; a number can also be typed in.],
     [6], [Combined preview], [The combined picture exactly as it will be saved, with the current overlap values, updated live. The red lines mark the seams and appear only here, not in the saved photos.],
   ),
   caption: [Elements of the Camera Setup window],
@@ -288,7 +288,7 @@ The program has a single main window (@fig-main-gui). The upper part shows the c
 }
 
 #decision("One rule: the door opening triggers, the QR code decides",
-  problem: [The first version counted door events in a fixed order - one extra event (e.g. a hand in the light barrier) shifted the whole sequence. The second version scanned the QR code when the door closed and remembered the tray number until it opened again: tray number and photos came from two different moments, and a missed or wrong event in between could save photos under the wrong tray.],
+  problem: [The first version counted door events in a fixed order, so one extra event (e.g. a hand in the light barrier) shifted the whole sequence. The second version scanned the QR code when the door closed and remembered the tray number until it opened again: tray number and photos came from two different moments, and a missed or wrong event in between could save photos under the wrong tray.],
   choice: [When the door opens, the USB photos are taken and the QR scanner is asked at the same time. A valid tray number → the photos are saved under it; no QR code → they are discarded. Closing the door does nothing. Nothing is remembered between two door events.],
 )
 
@@ -300,7 +300,7 @@ The program has a single main window (@fig-main-gui). The upper part shows the c
 
 
 #decision("Two QR readers and the still configuration",
-  problem: [Labels sit on reflective metal with only a narrow white border around the code. zbar alone could not read them at all. In addition, the ribbon cam ran in the video configuration, with which some codes became unreadable.],
+  problem: [Labels sit on reflective metal with only a narrow white border around the code. zbar alone could not read some of them. In addition, the ribbon cam ran in the video configuration, with which some codes became unreadable.],
   choice: [OpenCV's Aruco QR reader is tried first (it read the labels on metal reliably), zbar runs as fallback only if Aruco finds nothing. The ribbon cam now uses the still configuration again. The live preview uses exactly the same readers, so what is green there is also read at the door.],
 )
 
@@ -344,7 +344,7 @@ The program has a single main window (@fig-main-gui). The upper part shows the c
   problem: [Reading the QR code and saving the picture would freeze the window if they ran in the GUI thread, and further door events would only be handled afterwards.],
   choice: [The capture and the camera streams run in their own background threads. Results are handed to the main thread (`root.after`); only the main thread updates widgets.
 
-  Python threads don't execute Python code in parallel, but that hardly matters here: the threads mostly wait for the cameras or work inside C libraries (OpenCV, zbar), which release the lock $arrow.r$ the cameras are read and decoded at the same time.],
+  Python threads don't execute Python code in parallel, but that hardly matters here: the threads mostly wait for the cameras or work inside C libraries (OpenCV, zbar), which release Python’s global interpreter lock $arrow.r$ the cameras are read and decoded at the same time.],
 
 )
 
@@ -354,8 +354,8 @@ The program has a single main window (@fig-main-gui). The upper part shows the c
 )
 
 #decision("Crop the overlaps instead of stitching",
-  problem: [The OpenCV stitcher failed almost every time: the cameras hang side by side above objects of different heights, so near and far objects shift by different amounts between two cameras (parallax).],
-  choice: [The cameras are mounted rigidly, so the overlap between two neighbours is constant. One overlap value per seam is set once in the Camera Setup window; half of it is cut off each neighbour, then the images are put side by side.],
+  problem: [The OpenCV stitcher failed every time: the cameras hang side by side above objects of different heights, so near and far objects shift by different amounts between two cameras (parallax).],
+  choice: [The cameras are mounted rigidly, so the overlap between two neighbors is constant. One overlap value per seam is set once in the Camera Setup window; half of it is cut off each neighbor, then the images are put side by side.],
 )
 
 #decision("Problems in a red error banner instead of a status display",
@@ -368,18 +368,23 @@ The program has a single main window (@fig-main-gui). The upper part shows the c
 #pagebreak()
 = Setup
 
-The following steps set up a fresh Raspberry Pi. 
+The following steps set up a fresh Raspberry Pi.
 
 == Installation
 
-+ Install Raspberry Pi OS (64-bit, Desktop) on the SD card and finish the first-boot setup.
-+ Copy the project to the Pi, e.g.:
++ Install Raspberry Pi OS on the SD card and finish the first-boot setup.
++ Check the system time with `timedatectl`. If it is wrong, set it, otherwise `apt` rejects the package lists ("Not live until ..."):
 ```bash
-  git clone -b LinuxRuntimeSpeedy https://github.com/enjoyer-c/kardex.git
-``` (später GSI GitHub?)
-+ Run the setup script as the normal user (not with `sudo`). It installs all dependencies via apt and creates the `.venv`:
+  sudo date -s "YYYY-MM-DD HH:MM"
+```
++ Copy the project to the Pi:
 ```bash
-  cd kardex
+  mkdir -p ~/kardex && cd ~/kardex
+  git clone https://github.com/enjoyer-c/kardex.git KardexTrackerProgram
+```
++ Run the setup script as the normal user (not with `sudo`). It installs the system packages via `apt`, creates the Python environment `.venv` in the project folder and installs OpenCV and pyzbar there in the tested versions. At the end it checks that the Aruco QR reader is available:
+```bash
+  cd ~/kardex/KardexTrackerProgram
   chmod +x setup.sh
   ./setup.sh
 ```
@@ -391,9 +396,9 @@ Images and logs are stored on the SSD at `/mnt/kardex_ssd`. It has to be mounted
 + Find the UUID of the SSD: `lsblk -f`
 + Create the mount point: `sudo mkdir -p /mnt/kardex_ssd`
 + Add this line to `/etc/fstab` (example for an ext4-formatted SSD):
-  ```text
+```text
   UUID=<your-uuid>  /mnt/kardex_ssd  ext4  defaults,nofail  0  2
-  ```
+```
   `nofail` lets the Pi still boot if the SSD is missing.
 + Mount it and give the user write access:
 ```bash
@@ -403,20 +408,38 @@ Images and logs are stored on the SSD at `/mnt/kardex_ssd`. It has to be mounted
 
 == Starting the Program
 
+From a terminal (error messages are shown directly):
+
 ```bash
-source .venv/bin/activate
-python3 main.py
+cd ~/kardex/KardexTrackerProgram
+.venv/bin/python3 main.py
 ```
 
-Optional: copy `kardex.desktop` to `~/.local/share/applications/` (adjust the paths inside) to get a start-menu entry and the app icon in the taskbar.
+For a desktop icon and the app icon in the taskbar, save the following as `kardex.desktop` in `~/.local/share/applications/` (start menu) and on the desktop (`~/Desktop/`):
+
+#block(breakable: false)[
+```text
+[Desktop Entry]
+Type=Application
+Name=Kardex
+Comment=Kardex Shuttle Logistics System
+Path=/home/pi/kardex/KardexTrackerProgram
+Exec=/home/pi/kardex/KardexTrackerProgram/.venv/bin/python3 /home/pi/kardex/KardexTrackerProgram/main.py
+Icon=/home/pi/kardex/KardexTrackerProgram/icons/app_icon.png
+StartupWMClass=Kardex
+Terminal=false
+Categories=Utility;
+```
+]
+
+`StartupWMClass=Kardex` must match the window class of the program, otherwise the taskbar shows a generic icon.
 
 == First Start
 
-+ Open *Camera Setup*, arrange the cameras in their physical left-to-right order and click *Save Order*.
-+ Choose the picture mode (stitch or side by side).
-+ Use *Live: Ribbon Cam* to align and focus the ribbon camera on the QR code of a tray at the delivery position.
-+ Before normal operation: set `DOOR_TEST_BUTTON = False` in `config.py`.
-
++ Open the door once: `===== DOOR OPENED =====` must appear in the History. If it says CLOSED, flip `DOOR_SENSOR_INVERTED` in `config.py`.
++ Open *Camera Setup*, arrange the cameras in their physical left-to-right order with the arrows, adjust the overlap per seam until the combined picture looks continuous, and click Save. This creates `settings.json`.
++ Use *Live: Ribbon Cam* to align and focus the ribbon camera until the QR code of a tray at the delivery position is shown in green.
++ If other cameras or a different mounting are used: find suitable values for focus and white balance and set them in `USB_CAMERA_CONTROLS` in `config.py`.
 
 
 
@@ -555,7 +578,7 @@ Images and logs are written to the SSD, while the operating system stays on the 
 
 - *No check whether the SSD is mounted:* If the SSD is not mounted, images and logs are silently written to the SD card instead, or the program fails at startup. \ _Idea:_ check the mount point at startup and show the problem in the error banner.
 
-- *QR labels:* The labels sit on reflective metal with only a narrow white border around the code. Most of them are read reliably by the Aruco reader, single labels (e.g. tray 10) are not readable at all. \ _Idea:_ print new labels with a white border of at least four modules around the code.
+- *QR labels:* The labels sit on reflective metal with only a narrow white border around the code. All other tested labels are read reliably by the Aruco reader, only the label of tray 10 is not readable and will be replaced. \ _Idea:_ print new labels with a white border of at least four modules around the code.
 
 - *Parallax at the seams:* The overlap per seam only fits exactly for one height. Objects that are much higher or lower can look slightly doubled or cut off where two images meet. This is a limit of the method, not an error. Stitching, which could handle it in theory, failed (see @sec-decisions).
 

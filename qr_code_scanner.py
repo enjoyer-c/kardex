@@ -10,11 +10,15 @@ Two QR readers, one after another:
     zbar    pyzbar -> fallback 
 
 Only the ribbon-cam live preview (Camera Setup) stops the stream for a while.
+
+If the camera hangs inside libcamera, it can't be closed and reopened from within the program (the calls block).
+Then the whole program is restarted: it exits with PROGRAM_RESTART_EXIT_CODE and run_kardex.sh starts it again.
 """
 
 from dataclasses import dataclass
 from typing import Optional
 import logging
+import os
 import threading
 import time
 
@@ -71,7 +75,8 @@ def reader_names() -> str:
 def scan_frame(frame) -> Optional[QRResult]:
     """Looks for a QR code in a single frame. Returns the first QR code found, or None.
     A reader that crashes is skipped."""
-    gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)       # RGB2GRAY on purpose (frames are BGR) (old Programm Version worked with it)
+    # RGB2GRAY on purpose (frames are BGR) - exactly as in the old v0.2 scanner, which read all labels
+    gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
     for name, read in READERS:
         try:
             found = read(gray)
@@ -109,7 +114,7 @@ def ribbon_camera_num() -> int:
 def _open_camera() -> "Picamera2":
     picam = Picamera2(ribbon_camera_num())
     try:
-        # STILL configuration: better image processing (high-quality noise reductionlonger and exposure allowed). 
+        # STILL configuration: better image processing (high-quality noise reduction, longer exposure allowed). 
         # With the video configuration some QR codes became unreadable.
         picam.configure(picam.create_still_configuration(
             main={"size": config.QR_CAPTURE_SIZE, "format": "RGB888"}
@@ -129,10 +134,44 @@ def _close_camera(picam) -> None:
         logging.exception("Ribbon cam could not be stopped cleanly")
 
 
+def restart_program(reason: str) -> None:
+    """Last resort when the ribbon cam can't be recovered from within the program: log the reason and exit at once
+    with PROGRAM_RESTART_EXIT_CODE. run_kardex.sh then starts the program again, which reopens all cameras.
+    os._exit instead of sys.exit: it doesn't wait for the hanging camera thread, so the exit itself can't hang."""
+    logging.critical("%s - restarting the whole program", reason)
+    logging.shutdown()   # make sure the line is in the log file before the process ends
+    os._exit(config.PROGRAM_RESTART_EXIT_CODE)
+
+
+def _restart_camera_or_program() -> None:
+    """Tries to close and reopen the ribbon cam. Runs in a helper thread with a timeout, because a hanging camera
+    can block close() / open() forever - that's exactly what happened in the first long-term test."""
+    global _picam
+    result: dict = {}
+
+    def _worker() -> None:
+        try:
+            _close_camera(_picam)
+            result["picam"] = _open_camera()
+        except Exception as exc:
+            result["error"] = exc
+
+    helper = threading.Thread(target=_worker, name="qr-restart", daemon=True)
+    helper.start()
+    helper.join(timeout=config.QR_CAMERA_RESTART_TIMEOUT_S)
+
+    if helper.is_alive():
+        restart_program(f"Ribbon cam restart hangs (no answer after {config.QR_CAMERA_RESTART_TIMEOUT_S:.0f} s)")
+    if "error" in result:
+        restart_program(f"Ribbon cam restart failed: {result['error']}")
+    _picam = result["picam"]
+    logging.info("Ribbon cam restarted")
+
+
 def _scan_loop() -> None:
     """Background thread: newest frame -> scan -> remember the result. Runs until stop_stream().
     Never dies on an error: camera errors lead to a camera restart, everything else is logged and the loop continues."""
-    global _picam, _last_frame_time
+    global _last_frame_time
     errors_in_a_row = 0
     visible: str | None = None      # QR content currently in view
     last_seen = 0.0
@@ -149,13 +188,8 @@ def _scan_loop() -> None:
             logging.warning("Ribbon cam: could not read a frame (%s)", exc)
             if errors_in_a_row >= config.QR_CAMERA_RESTART_AFTER:
                 logging.error("Ribbon cam: %d errors in a row - restarting the camera", errors_in_a_row)
-                _close_camera(_picam)
-                try:
-                    _picam = _open_camera()
-                    errors_in_a_row = 0
-                    logging.info("Ribbon cam restarted")
-                except Exception as restart_exc:
-                    logging.error("Ribbon cam restart failed: %s", restart_exc)
+                _restart_camera_or_program()   # comes back only if the restart worked
+                errors_in_a_row = 0
             _stop_event.wait(0.5)
             continue
 
@@ -171,7 +205,7 @@ def _scan_loop() -> None:
                 result.seen_at = taken
                 _hits.append(result)
             # Only keep what scan_now could still ask for (+5 s safety margin)
-            while _hits and taken - _hits[0].seen_at > config.QR_SCAN_WINDOW_S + config.QR_RECENT_S + 5:            
+            while _hits and taken - _hits[0].seen_at > config.QR_SCAN_WINDOW_S + config.QR_RECENT_S + 5:
                 _hits.pop(0)
             _cond.notify_all()
 
@@ -227,6 +261,9 @@ def stop_stream() -> None:
         with _cond:
             _cond.notify_all()   # wake up a waiting scan_now
         _thread.join(timeout=5)
+        if _thread.is_alive():
+            # The scan thread hangs inside the camera - closing the camera would hang the GUI too
+            restart_program("Ribbon cam doesn't respond to stop")
         _thread = None
         if _picam is not None:
             _close_camera(_picam)

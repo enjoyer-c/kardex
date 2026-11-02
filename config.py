@@ -66,6 +66,8 @@ QR_GONE_S = 1.0                        # log "QR code out of view" only after th
 QR_CAMERA_RESTART_AFTER = 5            # restart the ribbon cam after this many failed frames in a row
 QR_FRAME_TIMEOUT_S = 3.0               # a frame that takes longer counts as a camera error
 
+QR_CAMERA_RESTART_TIMEOUT_S = 10.0      # camera restart that takes longer = hangs -> restart the whole program
+PROGRAM_RESTART_EXIT_CODE = 75          # exit code that tells run_kardex.sh to start the program again
 # --- Door-Sensor -----------------------------------------------------------
 DOOR_SENSOR_GPIO = 17                  #Pin11
 DOOR_SENSOR_BOUNCE_TIME_MS = 350

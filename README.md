@@ -27,14 +27,14 @@ The very first sensor report after program start is only logged ("Door state at 
 
 ## Running
 
-Start via the desktop icon, or from a terminal to see error messages directly:
+Install once with `./setup.sh` (see the documentation). The program starts automatically after every boot. Start by hand via the desktop icon, or from a terminal to see error messages directly:
 
 ```
-cd /home/pi/kardex/LinuxRuntimeSpeedy_new
-/home/pi/.venv/bin/python3 main.py
+cd /home/pi/kardex/KardexTrackerProgram
+./run_kardex.sh
 ```
 
-The program runs only once: a second start (e.g. double-click on the icon) shows a message and quits.
+`run_kardex.sh` starts the program again after a crash or a hanging ribbon cam. A normal close of the window is not restarted. The program runs only once: a second start (e.g. double-click on the icon) shows a message and quits.
 
 ### Files on the Pi
 
@@ -62,6 +62,8 @@ The program runs only once: a second start (e.g. double-click on the icon) shows
 | `gui.py` | Tkinter GUI: tray table, preview with magnifier, History, Manual Capture, Camera Setup |
 | `setup_ribbon_cam.py` | Ribbon cam live preview for focusing (green = Aruco, yellow = zbar, red = not readable) |
 | `*_mock.py` | Replace the hardware on Windows |
+| `run_kardex.sh` | Starts the program, restarts it after a crash or a hanging ribbon cam |
+| `setup.sh` | One-time setup of a fresh Pi (apt packages, `.venv`, OpenCV, pyzbar) |
 
 Details and design decisions: see the project documentation.
 
@@ -77,3 +79,4 @@ Details and design decisions: see the project documentation.
 - The door test button (`DOOR_TEST_BUTTON` in `config.py`) is a temporary function for testing without a magnet
 - The outer right USB camera vibrates slightly when the door opens or the lift moves, so its part of the picture can be a little blurred
 - All USB cameras stream permanently. With many cameras on one USB controller the bandwidth can run out (camera fails to open). Then lower `USB_CAMERA_FPS` or spread the cameras over different USB ports
+- The ribbon cam can hang inside libcamera (happened once after about two hours). The program then restarts itself; the cause is still unknown

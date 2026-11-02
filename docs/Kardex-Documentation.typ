@@ -90,6 +90,7 @@ This document is meant for developers who maintain or extend the system. It desc
     [`inventory.py`], [Reads, searches and writes the inventory list (crash-safe) and validates tray numbers.],
     [`setup_ribbon_cam.py`], [Live preview of the ribbon camera with QR detection for focusing. Started from the Camera Setup window.],
     [`*_mock.py`], [Replacements for the hardware modules on Windows, so the program can be tested without hardware.],
+    [`run_kardex.sh`], [Starts the program and starts it again after a crash or a hanging ribbon camera. Used by the desktop icon and the autostart.],
   ),
   caption: [Software modules and their purpose],
 ) <tab-software_modules>
@@ -169,7 +170,7 @@ A false trigger cannot break the flow: without a tray at the front it leads nowh
 - The first sensor report after program start is only logged ("Door state at startup"), it is not a real door movement.
 - A door opening while a capture is still running is ignored and logged as a warning. The same applies to a manual capture, which is rejected while another capture is running.
 - If the photos fail, the ribbon camera fails or the QR code contains no valid tray number, nothing is saved. The error is shown in the red banner and in the History.
-- If the ribbon camera stops delivering frames, a door opening reports an error instead of "no QR code", and the camera is restarted automatically.
+- If the ribbon camera stops delivering frames, a door opening reports an error instead of "no QR code", and the camera is restarted. If the camera hangs so badly that it can't be restarted from within the program, the whole program restarts itself (see @sec-decisions).
 
 == Threads
 
@@ -298,6 +299,10 @@ The program has a single main window (@fig-main-gui). The upper part shows the c
   choice: [A background thread scans every newest frame of the ribbon cam all the time and remembers each code with the time it was seen. At a door opening, the program only looks up which code was seen from `QR_RECENT_S` before to `QR_SCAN_WINDOW_S` after the door signal. In tests, the code was already known 0.7 to 0.9 s before the door opened. A watchdog reports an error instead of "no QR code" if the camera stops delivering frames, and restarts it.],
 )
 
+#decision("Restart the whole program if the ribbon cam hangs",
+  problem: [In the first long-term test the ribbon cam stopped delivering frames after about two hours. The program detected it, but closing and reopening the camera blocked forever inside libcamera. A hanging call in a C library can't be cancelled from Python, so no photos were saved until the program was restarted by hand three days later.],
+  choice: [The camera restart runs with a timeout (`QR_CAMERA_RESTART_TIMEOUT_S`). If it hangs or fails, the program logs the reason and exits with `PROGRAM_RESTART_EXIT_CODE`. `run_kardex.sh` then starts it again after 10 s, which reopens all cameras. A normal close of the window is not restarted.],
+)
 
 #decision("Two QR readers and the still configuration",
   problem: [Labels sit on reflective metal with only a narrow white border around the code. zbar alone could not read some of them. In addition, the ribbon cam ran in the video configuration, with which some codes became unreadable.],
@@ -412,10 +417,12 @@ From a terminal (error messages are shown directly):
 
 ```bash
 cd ~/kardex/KardexTrackerProgram
-.venv/bin/python3 main.py
+./run_kardex.sh
 ```
 
-For a desktop icon and the app icon in the taskbar, save the following as `kardex.desktop` in `~/.local/share/applications/` (start menu) and on the desktop (`~/Desktop/`):
+`run_kardex.sh` starts the program and starts it again after a crash or a hanging ribbon camera. A normal close of the window is not restarted.
+
+For a desktop icon and the app icon in the taskbar, save the following as `kardex.desktop` in `~/.local/share/applications/` (start menu) and on the desktop (`~/Desktop/`). For the autostart after every boot (e.g. after a power failure), copy the same file to `~/.config/autostart/`.
 
 #block(breakable: false)[
 ```text
@@ -424,7 +431,7 @@ Type=Application
 Name=Kardex
 Comment=Kardex Shuttle Logistics System
 Path=/home/pi/kardex/KardexTrackerProgram
-Exec=/home/pi/kardex/KardexTrackerProgram/.venv/bin/python3 /home/pi/kardex/KardexTrackerProgram/main.py
+Exec=/home/pi/kardex/KardexTrackerProgram/run_kardex.sh
 Icon=/home/pi/kardex/KardexTrackerProgram/icons/app_icon.png
 StartupWMClass=Kardex
 Terminal=false
@@ -433,6 +440,12 @@ Categories=Utility;
 ]
 
 `StartupWMClass=Kardex` must match the window class of the program, otherwise the taskbar shows a generic icon.
+
+To keep the system log after a reboot (helpful to find the cause of camera problems):
+
+```bash
+sudo mkdir -p /var/log/journal && sudo systemctl restart systemd-journald
+```
 
 == First Start
 
@@ -484,6 +497,8 @@ Paths (`BASE_DIR`, `SSD_DIR`, `OUTPUT_DIR`, `LOG_DIR`) and the camera backend (`
 / `QR_GONE_S = 1.0`: "QR code out of view" is only logged after this long without a code, so a single unreadable frame doesn't fill the log.
 / `QR_FRAME_TIMEOUT_S = 3.0`: A frame that takes longer counts as a camera error.
 / `QR_CAMERA_RESTART_AFTER = 5`: After this many camera errors in a row, the ribbon cam is restarted.
+/ `QR_CAMERA_RESTART_TIMEOUT_S = 10.0`: A camera restart that takes longer counts as hanging, then the whole program is restarted.
+/ `PROGRAM_RESTART_EXIT_CODE = 75`: Exit code that tells `run_kardex.sh` to start the program again.
 
 #pagebreak()
 
@@ -572,8 +587,6 @@ Images and logs are written to the SSD, while the operating system stays on the 
 
 = Known Limitations and Ideas
 
-- *No autostart:* The program does not start automatically when the Pi boots. After a reboot it has to be started by hand. \ _Idea:_ a systemd service that starts the program on boot and restarts it after a crash.
-
 - *System time:* The Pi has no built-in battery-backed clock and gets the time from the network. Without an internet connection, image file names, the "Last Capture" column and the log get wrong timestamps. Since images are sorted by their timestamp, a new image could even be treated as the oldest and deleted. \ _Idea:_ add an RTC module.
 
 - *No check whether the SSD is mounted:* If the SSD is not mounted, images and logs are silently written to the SD card instead, or the program fails at startup. \ _Idea:_ check the mount point at startup and show the problem in the error banner.
@@ -591,6 +604,8 @@ Images and logs are written to the SSD, while the operating system stays on the 
 - *Test code still included:* The door test button is switched off (`DOOR_TEST_BUTTON = False`), but its code is still in the program. It can be removed once it is no longer needed for testing without a magnet.
 
 - *Long-term operation not yet tested:* The flow has been tested successfully at the lift. The seam overlaps, the fixed camera settings and the QR detection still have to be checked over a longer period and with differently loaded trays.
+
+- *Ribbon cam hangs:* In the first long-term test the ribbon cam stopped delivering frames once after about two hours. The program now restarts itself in this case, but the cause is still unknown. The system log is now kept after reboots, so the cause can be checked if it happens again.
 
 
 
